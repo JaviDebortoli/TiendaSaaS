@@ -109,7 +109,7 @@ export function createPayment(transport: Transport) {
       } = options;
       const started = now();
       let synced = false;
-      let order: Cart | null = null;
+      let order: Cart | null;
 
       for (;;) {
         order = await readOrder(transport, orderCode);
