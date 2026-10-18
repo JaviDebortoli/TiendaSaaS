@@ -1,0 +1,30 @@
+{
+  "name": "vendure-plugin-mercadopago",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vendure plugin: Mercado Pago Checkout Pro for multi-tenant stores (OAuth, webhooks, refunds).",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.e2e.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "mercadopago": "3.6.1"
+  },
+  "peerDependencies": {
+    "@vendure/core": "3.8.0"
+  },
+  "devDependencies": {
+    "@swc/core": "^1.16.18",
+    "@vendure/core": "3.8.0",
+    "@vendure/testing": "3.8.0",
+    "msw": "^3.0.3",
+    "unplugin-swc": "^2.0.0",
+    "vitest": "^5.0.5"
+  }
+}
