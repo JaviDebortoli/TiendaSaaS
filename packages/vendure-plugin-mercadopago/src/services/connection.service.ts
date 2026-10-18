@@ -4,6 +4,7 @@ import { In, LessThan } from 'typeorm';
 import { DEFAULT_TOKEN_TTL_SECONDS, loggerCtx, MP_PLUGIN_OPTIONS } from '../constants';
 import { MercadoPagoConnection } from '../entities/mercadopago-connection.entity';
 import { MercadoPagoAttentionEvent } from '../events';
+import { isUniqueViolation } from '../lib/db';
 import type { ResolvedMercadoPagoOptions } from '../types';
 import {
   MercadoPagoApiError,
@@ -36,15 +37,6 @@ const refreshContext = (channelId: ID) => `mp-connection:${channelId}:refresh`;
 function describeError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.slice(0, MAX_ERROR_LENGTH);
-}
-
-function isUniqueViolation(error: unknown): boolean {
-  const e = error as { code?: string; message?: string; driverError?: { code?: string } };
-  return (
-    e?.code === '23505' ||
-    e?.driverError?.code === '23505' ||
-    /unique constraint/i.test(e?.message ?? '')
-  );
 }
 
 /**

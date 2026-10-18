@@ -1,16 +1,28 @@
 import { PluginCommonModule, VendurePlugin } from '@vendure/core';
 import { adminApiExtensions, MercadoPagoAdminResolver } from './api/admin-api';
 import { MercadoPagoOAuthController } from './api/oauth.controller';
+import {
+  CreateMercadoPagoCheckoutResultResolver,
+  MercadoPagoShopResolver,
+  shopApiExtensions,
+  SyncMercadoPagoPaymentResultResolver,
+} from './api/shop-api';
+import { MercadoPagoWebhookController } from './api/webhook.controller';
 import { MP_PLUGIN_OPTIONS } from './constants';
 import { channelCustomFields } from './custom-fields';
 import { MercadoPagoConnection } from './entities/mercadopago-connection.entity';
 import { MercadoPagoOAuthState } from './entities/mercadopago-oauth-state.entity';
 import { MercadoPagoPaymentClaim } from './entities/mercadopago-payment-claim.entity';
 import { manageMercadoPago } from './permissions';
+import { mercadoPagoConnectedChecker, mercadoPagoHandler } from './payment/mercadopago-handler';
 import { MercadoPagoCipherService } from './services/cipher.service';
+import { MercadoPagoCheckoutService } from './services/checkout.service';
 import { MercadoPagoConnectionService } from './services/connection.service';
 import { MercadoPagoApiService } from './services/mercadopago-api.service';
 import { MercadoPagoOAuthService } from './services/oauth.service';
+import { MercadoPagoPaymentOperations } from './services/payment-operations.service';
+import { MercadoPagoPaymentProcessor } from './services/payment-processor.service';
+import { MercadoPagoWebhookService } from './services/webhook.service';
 import { refreshConnectionsTask } from './tasks';
 import { MercadoPagoPluginOptions, resolveOptions, ResolvedMercadoPagoOptions } from './types';
 
@@ -23,13 +35,30 @@ import { MercadoPagoPluginOptions, resolveOptions, ResolvedMercadoPagoOptions } 
     MercadoPagoApiService,
     MercadoPagoConnectionService,
     MercadoPagoOAuthService,
+    MercadoPagoCheckoutService,
+    MercadoPagoPaymentProcessor,
+    MercadoPagoPaymentOperations,
+    MercadoPagoWebhookService,
   ],
-  controllers: [MercadoPagoOAuthController],
+  controllers: [MercadoPagoOAuthController, MercadoPagoWebhookController],
+  shopApiExtensions: {
+    schema: shopApiExtensions,
+    resolvers: [
+      MercadoPagoShopResolver,
+      CreateMercadoPagoCheckoutResultResolver,
+      SyncMercadoPagoPaymentResultResolver,
+    ],
+  },
   adminApiExtensions: {
     schema: adminApiExtensions,
     resolvers: [MercadoPagoAdminResolver],
   },
   configuration: (config) => {
+    config.paymentOptions.paymentMethodHandlers.push(mercadoPagoHandler);
+    config.paymentOptions.paymentMethodEligibilityCheckers = [
+      ...(config.paymentOptions.paymentMethodEligibilityCheckers ?? []),
+      mercadoPagoConnectedChecker,
+    ];
     config.authOptions.customPermissions = [
       ...(config.authOptions.customPermissions ?? []),
       manageMercadoPago,

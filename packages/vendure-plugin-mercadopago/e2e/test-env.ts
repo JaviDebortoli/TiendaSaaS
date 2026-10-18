@@ -4,6 +4,7 @@ import {
   registerInitializer,
   SimpleGraphQLClient,
   E2E_DEFAULT_CHANNEL_TOKEN,
+  PostgresInitializer,
   SqljsInitializer,
   testConfig,
 } from '@vendure/testing';
@@ -14,6 +15,23 @@ import { MercadoPagoPlugin, MercadoPagoPluginOptions, manageMercadoPago } from '
 import { initialData } from './fixtures/initial-data';
 
 registerInitializer('sqljs', new SqljsInitializer(path.join(__dirname, '__data__')));
+registerInitializer('postgres', new PostgresInitializer());
+
+/** PostgreSQL suites (concurrency, unique indexes) run only when a test database is configured. */
+export const postgresAvailable = Boolean(process.env.TEST_DB_PASSWORD);
+
+function postgresConfig(): Partial<VendureConfig> {
+  return {
+    dbConnectionOptions: {
+      type: 'postgres',
+      host: process.env.TEST_DB_HOST ?? 'localhost',
+      port: Number(process.env.TEST_DB_PORT ?? 5432),
+      username: process.env.TEST_DB_USERNAME ?? 'tiendasaas',
+      password: process.env.TEST_DB_PASSWORD,
+      database: 'postgres',
+    },
+  };
+}
 
 export const TEST_OPTIONS: MercadoPagoPluginOptions = {
   clientId: 'test-client-id',
@@ -30,6 +48,7 @@ export function createMpTestEnvironment(
   port: number,
   options: Partial<MercadoPagoPluginOptions> = {},
   config: Partial<VendureConfig> = {},
+  db: 'sqljs' | 'postgres' = 'sqljs',
 ) {
   const env = createTestEnvironment(
     mergeConfig(
@@ -40,6 +59,7 @@ export function createMpTestEnvironment(
       },
       {
         ...config,
+        ...(db === 'postgres' ? postgresConfig() : {}),
         plugins: [
           MercadoPagoPlugin.init({ ...TEST_OPTIONS, ...options }),
           ...(config.plugins ?? []),

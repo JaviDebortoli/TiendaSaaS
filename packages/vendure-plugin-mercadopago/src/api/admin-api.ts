@@ -1,10 +1,11 @@
-import { Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { DEFAULT_CHANNEL_CODE } from '@vendure/common/lib/shared-constants';
-import { Allow, Ctx, RequestContext, UserInputError } from '@vendure/core';
+import { Allow, Ctx, Permission, RequestContext, UserInputError } from '@vendure/core';
 import gql from 'graphql-tag';
 import { manageMercadoPago } from '../permissions';
 import { MercadoPagoConnectionService } from '../services/connection.service';
 import { MercadoPagoOAuthService } from '../services/oauth.service';
+import { MercadoPagoPaymentProcessor } from '../services/payment-processor.service';
 
 export const adminApiExtensions = gql`
   """
@@ -27,6 +28,8 @@ export const adminApiExtensions = gql`
     "Returns the Mercado Pago authorization URL the store owner must open to link their account."
     startMercadoPagoConnection: String!
     disconnectMercadoPago: Boolean!
+    "Cancels a payment that is still pending or in process (e.g. an unpaid Rapipago voucher)."
+    cancelMercadoPagoPayment(paymentId: String!): Boolean!
   }
 `;
 
@@ -35,6 +38,7 @@ export class MercadoPagoAdminResolver {
   constructor(
     private readonly connections: MercadoPagoConnectionService,
     private readonly oauth: MercadoPagoOAuthService,
+    private readonly processor: MercadoPagoPaymentProcessor,
   ) {}
 
   @Query()
@@ -66,5 +70,15 @@ export class MercadoPagoAdminResolver {
   @Allow(manageMercadoPago.Permission)
   async disconnectMercadoPago(@Ctx() ctx: RequestContext): Promise<boolean> {
     return this.connections.disconnect(ctx.channelId);
+  }
+
+  @Mutation()
+  @Allow(Permission.UpdateOrder)
+  async cancelMercadoPagoPayment(
+    @Ctx() ctx: RequestContext,
+    @Args('paymentId') paymentId: string,
+  ): Promise<boolean> {
+    await this.processor.cancelPending(ctx, paymentId);
+    return true;
   }
 }

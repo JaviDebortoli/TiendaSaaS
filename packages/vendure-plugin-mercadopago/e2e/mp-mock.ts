@@ -54,6 +54,10 @@ export class MercadoPagoMock {
   payments = new Map<number, MockPayment>();
   /** When set, refunds are rejected with this message (e.g. the seller has no balance). */
   refundError: string | undefined;
+  /** Artificial latency of GET /v1/payments/:id, to prove webhooks are answered before processing. */
+  paymentLookupDelayMs = 0;
+  /** Status the preference endpoint answers with; set to 500 to simulate an outage. */
+  preferenceStatus = 201;
   private counter = 0;
 
   constructor() {
@@ -82,6 +86,12 @@ export class MercadoPagoMock {
       }),
       http.post(`${API}/checkout/preferences`, async ({ request }) => {
         await this.record(request);
+        if (this.preferenceStatus !== 201) {
+          return HttpResponse.json(
+            { message: 'down', status: this.preferenceStatus },
+            { status: this.preferenceStatus },
+          );
+        }
         const id = `pref-${++this.counter}`;
         return HttpResponse.json(
           {
@@ -94,6 +104,8 @@ export class MercadoPagoMock {
       }),
       http.get(`${API}/v1/payments/:id`, async ({ request, params }) => {
         await this.record(request);
+        if (this.paymentLookupDelayMs)
+          await new Promise((r) => setTimeout(r, this.paymentLookupDelayMs));
         const payment = this.payments.get(Number(params.id));
         const token = request.headers.get('authorization')?.replace('Bearer ', '');
         if (!payment || payment.ownerToken !== token) {
@@ -151,6 +163,8 @@ export class MercadoPagoMock {
     this.validTokens.clear();
     this.payments.clear();
     this.refundError = undefined;
+    this.paymentLookupDelayMs = 0;
+    this.preferenceStatus = 201;
   }
 
   requestsTo(method: string, path: string): RecordedRequest[] {
@@ -166,7 +180,8 @@ export class MercadoPagoMock {
     const body = parseBody(await request.clone().text());
     this.requests.push({
       method: request.method,
-      path: new URL(request.url).pathname,
+      // The SDK adds a trailing slash to some endpoints (/checkout/preferences/).
+      path: new URL(request.url).pathname.replace(/\/+$/, '') || '/',
       authorization: request.headers.get('authorization'),
       idempotencyKey: request.headers.get('x-idempotency-key'),
       body,
