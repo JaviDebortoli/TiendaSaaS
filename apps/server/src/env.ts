@@ -98,6 +98,8 @@ export const env = {
     // Tests and local demos only: accept http/local return URLs.
     allowInsecureReturnUrls: bool('MP_ALLOW_INSECURE_RETURN_URLS', false),
   },
+  /** How the shared account and the platform are called in emails and on the storefronts. */
+  platformName: optional('PLATFORM_NAME') ?? 'La plataforma',
   smtp: {
     host: optional('SMTP_HOST'),
     port: Number(optional('SMTP_PORT') ?? 587),

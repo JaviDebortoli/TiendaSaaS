@@ -12,7 +12,7 @@ Estado inicial: ningún punto está resuelto. Cada punto pasa a "Resuelto" solo 
 | V6  | Lista completa de estados de pago                               | Pendiente (documentación) | Implementación                |
 | V7  | Una línea por producto vs. una sola línea con el total          | Pendiente (sandbox)       | Responsable                   |
 | V8  | Calculator por defecto = tarifa fija exacta                     | **Resuelto** (ver abajo)  | Implementación                |
-| V9  | `EmailPlugin`: remitente y plantilla por canal                  | Pendiente                 | Implementación                |
+| V9  | `EmailPlugin`: remitente y plantilla por canal                  | **Resuelto** (ver abajo)  | Implementación                |
 | V10 | SDK 3.x en servidor, OAuth con SDK, `UuidIdStrategy` + `strict` | **Resuelto** (ver abajo)  | Implementación                |
 
 Los detalles y los pasos de prueba se completan a medida que se implementa cada parte.
@@ -55,3 +55,9 @@ Los detalles y los pasos de prueba se completan a medida que se implementa cada 
 - El dashboard (React, Vendure 3.8) compila con la extensión del plugin, los campos propios del `Seller` y del `Channel`, y `UuidIdStrategy`.
 - Prueba: `apps/storefront-reference/e2e/dashboard.spec.ts` (Playwright, navegador real). El dueño de un local inicia sesión, `me { channels }` devuelve solo su canal, abre productos, pedidos, métodos de envío y la página "Mercado Pago" sin respuestas 4xx de la Admin API, y el botón de vinculación lleva a `auth.mercadopago.com/authorization` con `code_challenge_method=S256` y sin el `client_secret`.
 - Resumen de V10: servidor con `strict` y `UuidIdStrategy` (DEC-8), SDK `mercadopago` 3.6.1 desde CommonJS, OAuth por `fetch` porque el SDK no cubre PKCE (DEC-10), dashboard compatible (esta sección). Sin excepciones a `strict` en ningún paquete.
+
+### V9: `EmailPlugin` con remitente y plantilla por canal (resuelto, 2026-10-18)
+
+- Remitente por canal: sí, con `globalTemplateVars` como función (recibe el contexto con el canal) y los manejadores usando `{{ fromAddress }}` (local) o `{{ platformFromAddress }}` (plataforma). Plantilla por canal: sí, con un `TemplateLoader` propio que recibe el contexto (`ChannelTemplateLoader`). La documentación no lo decía; el comportamiento está probado.
+- Pruebas: `apps/server/e2e/emails.e2e-spec.ts`. Dos locales compran con el mismo servidor: los emails de pedido salen con `"Panadería Don Juan" <no-reply@plataforma.test>` y `"Librería Luna" <...>`; el local con carpeta propia usa su plantilla y el otro la de la plataforma; los emails de cuenta salen a nombre de la plataforma con el enlace de verificación a la tienda de origen (o a la plataforma si el local aún no tiene dominio).
+- Los avisos de atención (PRD 9.4 y 9.8) llegan a los administradores del canal y, en problemas de conexión, también al superadmin.

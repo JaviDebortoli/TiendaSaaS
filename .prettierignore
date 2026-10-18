@@ -8,3 +8,4 @@ package-lock.json
 **/generated/**
 **/gql/**
 PRD.md
+**/*.hbs

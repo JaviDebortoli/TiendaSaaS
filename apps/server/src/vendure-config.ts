@@ -7,18 +7,13 @@ import {
   VendureConfig,
 } from '@vendure/core';
 import { DashboardPlugin } from '@vendure/dashboard/plugin';
-import { defaultEmailHandlers, EmailPlugin, FileBasedTemplateLoader } from '@vendure/email-plugin';
 import { GraphiqlPlugin } from '@vendure/graphiql-plugin';
 import { HardenPlugin } from '@vendure/harden-plugin';
 import path from 'node:path';
 import { MercadoPagoPlugin } from 'vendure-plugin-mercadopago';
+import { createEmailPlugin } from './email/email-plugin';
 import { env } from './env';
 import { PlatformPlugin } from './platform/platform.plugin';
-
-const emailTemplatesPath = path.join(
-  path.dirname(require.resolve('@vendure/email-plugin/package.json')),
-  'templates',
-);
 
 function parseTrustProxy(value: string | undefined): boolean | number {
   if (value === undefined) return false;
@@ -103,32 +98,25 @@ export const config: VendureConfig = {
       maxQueryComplexity: 500,
       apiMode: env.isDev ? 'dev' : 'prod',
     }),
-    EmailPlugin.init({
-      ...(env.isDev || !env.smtp.host
-        ? {
-            devMode: true as const,
-            outputPath: path.join(__dirname, '../static/email/test-emails'),
-            route: 'mailbox',
-          }
-        : {
-            transport: {
-              type: 'smtp' as const,
-              host: env.smtp.host,
-              port: env.smtp.port,
-              auth: env.smtp.user
-                ? { user: env.smtp.user, pass: env.smtp.password ?? '' }
-                : undefined,
+    createEmailPlugin({
+      platform: { name: env.platformName, from: env.smtp.from, publicUrl: env.publicUrl },
+      delivery:
+        env.isDev || !env.smtp.host
+          ? {
+              devMode: true,
+              outputPath: path.join(__dirname, '../static/email/test-emails'),
+              route: 'mailbox',
+            }
+          : {
+              transport: {
+                type: 'smtp',
+                host: env.smtp.host,
+                port: env.smtp.port,
+                auth: env.smtp.user
+                  ? { user: env.smtp.user, pass: env.smtp.password ?? '' }
+                  : undefined,
+              },
             },
-          }),
-      handlers: defaultEmailHandlers,
-      templateLoader: new FileBasedTemplateLoader(emailTemplatesPath),
-      globalTemplateVars: {
-        fromAddress: env.smtp.from,
-        verifyEmailAddressUrl: `${env.publicUrl}/verify`,
-        passwordResetUrl: `${env.publicUrl}/reset-password`,
-        changeEmailAddressUrl: `${env.publicUrl}/verify-email`,
-        adminPasswordResetUrl: `${env.publicUrl}/dashboard/reset-password`,
-      },
     }),
     DashboardPlugin.init({
       route: 'dashboard',

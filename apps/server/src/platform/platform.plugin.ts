@@ -1,5 +1,6 @@
 import { OnApplicationBootstrap } from '@nestjs/common';
 import { PluginCommonModule, RequestContextService, VendurePlugin } from '@vendure/core';
+import { AttentionNotifier } from '../email/attention';
 import { BaseDataService } from './base-data.service';
 import { sellerCustomFields } from './custom-fields';
 import { ProvisioningResolver, provisioningApiExtensions } from './provisioning.api';
@@ -12,7 +13,7 @@ import { deliveryZoneChecker } from './shipping-checker';
  */
 @VendurePlugin({
   imports: [PluginCommonModule],
-  providers: [BaseDataService, StoreProvisioningService],
+  providers: [BaseDataService, StoreProvisioningService, AttentionNotifier],
   adminApiExtensions: {
     schema: provisioningApiExtensions,
     resolvers: [ProvisioningResolver],
@@ -39,10 +40,12 @@ export class PlatformPlugin implements OnApplicationBootstrap {
   constructor(
     private readonly requestContextService: RequestContextService,
     private readonly baseData: BaseDataService,
+    private readonly attention: AttentionNotifier,
   ) {}
 
   /** Keeps Argentina, VAT, Spanish and ARS in place on every start. */
   async onApplicationBootstrap(): Promise<void> {
+    this.attention.start();
     if (!PlatformPlugin.ensureBaseDataOnBootstrap) return;
     const ctx = await this.requestContextService.create({ apiType: 'admin' });
     await this.baseData.ensure(ctx);

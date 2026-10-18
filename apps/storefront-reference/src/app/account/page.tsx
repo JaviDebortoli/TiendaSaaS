@@ -36,7 +36,12 @@ export default async function AccountPage({
           />
           <PrimaryButton type="submit">Iniciar sesión</PrimaryButton>
         </form>
-        <p className="mt-6 text-sm">
+        <p className="mt-4 text-sm">
+          <Link href="/account/reset-password" className="underline">
+            Olvidé mi contraseña
+          </Link>
+        </p>
+        <p className="mt-2 text-sm">
           ¿No tenés cuenta?{' '}
           <Link href="/account/register" className="underline">
             Crear una cuenta

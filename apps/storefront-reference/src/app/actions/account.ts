@@ -47,3 +47,24 @@ export async function verifyAction(form: FormData) {
   revalidatePath('/', 'layout');
   redirect('/account');
 }
+
+/** Sends the reset email. The answer is the same whether or not the email has an account. */
+export async function requestResetAction(form: FormData) {
+  const commerce = await getCommerce();
+  const result = await attempt(() => commerce.account.requestPasswordReset(field(form, 'email')));
+  if (!result.ok) redirectWithError('/account/reset-password', result.message);
+  redirect('/account/reset-password?sent=1');
+}
+
+export async function resetPasswordAction(form: FormData) {
+  const token = field(form, 'token');
+  const commerce = await getCommerce();
+  const result = await attempt(() =>
+    commerce.account.resetPassword(token, String(form.get('password') ?? '')),
+  );
+  if (!result.ok) {
+    redirectWithError(`/account/reset-password?token=${encodeURIComponent(token)}`, result.message);
+  }
+  revalidatePath('/', 'layout');
+  redirect('/account');
+}
