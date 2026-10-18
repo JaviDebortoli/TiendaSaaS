@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+.next
+coverage
+package-lock.json
+.atl
+**/generated/**
+**/gql/**
+PRD.md

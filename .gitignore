@@ -1,0 +1,22 @@
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+# Vendure runtime output
+apps/server/static/
+apps/server/dev-mailbox/
+apps/server/vendure.sqlite
+# Playwright
+test-results/
+playwright-report/
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
