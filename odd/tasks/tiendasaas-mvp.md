@@ -35,7 +35,10 @@ Branch: feat/mvp · Delivery: ask-on-risk, work-unit commits on the branch (push
 
 Route declaration: all tasks start inline (no Writer trigger holds yet: units are sequentially dependent). Re-evaluate for T7/T8 vs T4/T5 as parallel units once the Shop API schema is stable.
 
+- [!] T11 · S9 · blocked · verification against the real Mercado Pago (V1, V2, V6, V7, V12-V18) needs credentials · see VERIFICATION.md
+
 ## Log
 
 - L1 (2026-10-18, user): Original request, verbatim — see the kickoff message "Inicio del desarrollo" (Vas a desarrollar desde cero el proyecto descrito en `PRD.md` ... Empezá leyendo `PRD.md` y creando `PLAN.md`.). Reproduced here in its decision-bearing parts in S1–S13 above.
 - L2: PRD read in full. Registry check on 2026-10-18: @vendure/* 3.8.0, mercadopago 3.6.1, next 16.4.2, react 19.3.1, tailwindcss 4.3.3, graphql-request 7.4.0, vitest 5.0.5, msw 3.0.3, @playwright/test 1.64.1. `typescript` latest is 7.0.2 but PRD fixes 5.8.x (matches @vendure/core 3.8.0 devDependency 5.8.2) → keep 5.8.3; no deviation.
+- L3 (2026-10-18): all tasks T0-T10 done and verified (281 unit/integration tests, 21 Playwright tests, lint/types/build green, full docker compose from clean volumes). T11 is the user-owned sandbox verification. Extra findings recorded in DECISIONS.md/VERIFICATION.md (V11: Vendure swaps ineligible shipping silently -> expectedTotal safeguard).
