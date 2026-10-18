@@ -24,3 +24,4 @@ Thumbs.db
 
 # Vendure CLI local state
 .vendure/
+**/e2e/__data__/

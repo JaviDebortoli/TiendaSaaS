@@ -1,0 +1,3 @@
+name,slug,description,assets,facets,optionGroups,optionValues,sku,price,taxCategory,stockOnHand,trackInventory,variantAssets,variantFacets
+Alpha Mug,alpha-mug,A ceramic mug,,,,,MUG-1,1999.00,standard,100,false,,
+Beta Notebook,beta-notebook,A paper notebook,,,,,NOTE-1,1050.50,standard,100,false,,
