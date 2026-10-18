@@ -13,6 +13,7 @@
     "e2e:backend": "ts-node --project e2e/backend/tsconfig.json e2e/backend/start.ts"
   },
   "dependencies": {
+    "@next/env": "16.4.2",
     "@tiendasaas/commerce-core": "*",
     "next": "16.4.2",
     "react": "19.3.1",

@@ -1,0 +1,16 @@
+.git
+.atl
+.github
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/test-results
+**/playwright-report
+**/e2e/__data__
+**/coverage
+.env
+.env.*
+!.env.example
+*.log
+odd

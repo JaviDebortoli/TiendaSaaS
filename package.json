@@ -12,17 +12,25 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspaces --if-present",
-    "build": "npm run build --workspaces --if-present",
+    "predev": "npm run build -w vendure-plugin-mercadopago -w @tiendasaas/commerce-core",
+    "dev": "concurrently --names server,storefront --prefix-colors blue,green \"npm run dev -w @tiendasaas/server\" \"npm run dev -w @tiendasaas/storefront-reference\"",
+    "infra:up": "docker compose up -d database storage storage-init",
+    "infra:down": "docker compose down",
+    "build": "npm run build -w vendure-plugin-mercadopago -w @tiendasaas/commerce-core && npm run build -w @tiendasaas/server && npm run build:dashboard -w @tiendasaas/server && npm run build -w @tiendasaas/storefront-reference",
     "test": "npm run test --workspaces --if-present",
+    "test:e2e": "npm run test:e2e -w @tiendasaas/storefront-reference",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "codegen": "npm run codegen --workspaces --if-present"
+    "codegen": "npm run codegen --workspaces --if-present",
+    "verify": "npm run lint && npm run typecheck && npm run build && npm test && npm run test:e2e",
+    "provision-store": "npm run provision-store -w @tiendasaas/server --",
+    "seed-demo": "npm run seed-demo -w @tiendasaas/server"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",
     "@types/node": "^24.0.0",
+    "concurrently": "^9.2.1",
     "eslint": "^10.13.0",
     "globals": "^16.0.0",
     "prettier": "^3.9.10",

@@ -1,9 +1,59 @@
-# Infrastructure services are always available. The application services (server, worker,
-# storefront-reference) belong to the `full` profile so daily development can run them with
-# `npm run dev` on the host:
-#   docker compose up -d                       -> infrastructure only (database + object storage)
-#   docker compose --profile full up --build   -> everything
+# Two ways to work (PRD 16.8):
+#
+#   Everything in containers (close to production):
+#     cp .env.example .env   # fill in the passwords
+#     docker compose up --build
+#     docker compose run --rm seed-demo        # optional: two demo stores with products
+#
+#   Daily development: only the infrastructure in containers, the applications on the host
+#     docker compose up -d database storage storage-init
+#     npm run dev
+#
+# Mercado Pago cannot reach localhost, so a real payment needs a public HTTPS address
+# (a tunnel with a fixed subdomain): see README.md, "Probar con Mercado Pago".
 name: tiendasaas
+
+x-app-environment: &app-environment
+  APP_ENV: ${APP_ENV:-dev}
+  PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3000}
+  COOKIE_SECRET: ${COOKIE_SECRET:?Set COOKIE_SECRET in .env}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  TRUST_PROXY: ${TRUST_PROXY:-}
+  DB_HOST: database
+  DB_PORT: 5432
+  DB_NAME: ${DB_NAME:-tiendasaas}
+  DB_USERNAME: ${DB_USERNAME:-tiendasaas}
+  DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+  SUPERADMIN_USERNAME: ${SUPERADMIN_USERNAME:-superadmin}
+  SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:?Set SUPERADMIN_PASSWORD in .env}
+  S3_ENDPOINT: http://storage:8333
+  S3_BUCKET: ${S3_BUCKET:-tiendasaas-assets}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:?Set S3_ACCESS_KEY in .env}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:?Set S3_SECRET_KEY in .env}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_FORCE_PATH_STYLE: 'true'
+  ASSET_URL_PREFIX: ${ASSET_URL_PREFIX:-}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  EMAIL_FROM: ${EMAIL_FROM:-Platform <no-reply@example.invalid>}
+  PLATFORM_NAME: ${PLATFORM_NAME:-La plataforma}
+  PLATFORM_ALERT_EMAIL: ${PLATFORM_ALERT_EMAIL:-}
+  # Mercado Pago. Empty values are fine until a store links its account.
+  MP_CLIENT_ID: ${MP_CLIENT_ID:-}
+  MP_CLIENT_SECRET: ${MP_CLIENT_SECRET:-}
+  MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET:-}
+  MP_REDIRECT_URI: ${MP_REDIRECT_URI:-}
+  MP_TOKEN_ENCRYPTION_KEY: ${MP_TOKEN_ENCRYPTION_KEY:-}
+  MP_WEBHOOK_MODE: ${MP_WEBHOOK_MODE:-application}
+  MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE: ${MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE:-true}
+  MP_OAUTH_TEST_TOKEN: ${MP_OAUTH_TEST_TOKEN:-false}
+  MP_WEBHOOK_TOLERANCE_SECONDS: ${MP_WEBHOOK_TOLERANCE_SECONDS:-600}
+  MP_PREFERENCE_TTL_MINUTES: ${MP_PREFERENCE_TTL_MINUTES:-30}
+  MP_PREFERENCE_ITEMS_MODE: ${MP_PREFERENCE_ITEMS_MODE:-lines}
+  MP_DASHBOARD_URL: ${MP_DASHBOARD_URL:-}
+  MP_ALLOW_INSECURE_RETURN_URLS: ${MP_ALLOW_INSECURE_RETURN_URLS:-false}
 
 services:
   database:
@@ -64,6 +114,94 @@ services:
       - |
         aws --endpoint-url http://storage:8333 s3api head-bucket --bucket "$$S3_BUCKET" 2>/dev/null ||
         aws --endpoint-url http://storage:8333 s3api create-bucket --bucket "$$S3_BUCKET"
+
+  # Vendure server: Shop API, Admin API, dashboard, webhook. Applies the migrations at start.
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    restart: unless-stopped
+    environment: *app-environment
+    ports:
+      - '${PORT:-3000}:3000'
+    depends_on:
+      database:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+
+  # Same image, other command: job queue (webhooks, emails, search index) and scheduled tasks.
+  worker:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    restart: unless-stopped
+    command: ['node', 'dist/index-worker.js']
+    environment: *app-environment
+    # The server owns the migrations, so the worker waits until it is up.
+    depends_on:
+      server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3020/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 10
+
+  # The reference storefront. One instance serves ONE store: its channel token is the setting.
+  storefront-reference:
+    build:
+      context: .
+      dockerfile: apps/storefront-reference/Dockerfile
+    restart: unless-stopped
+    environment:
+      VENDURE_SHOP_API_URL: http://server:3000/shop-api
+      VENDURE_CHANNEL_TOKEN: ${STORE_CHANNEL_TOKEN:-demo-panaderia}
+      STOREFRONT_PUBLIC_URL: ${STOREFRONT_PUBLIC_URL:-http://localhost:3001}
+      STORE_NAME: ${STORE_NAME:-Panadería Don Juan}
+      PLATFORM_NAME: ${PLATFORM_NAME:-La plataforma}
+      # Local demo over plain http. Remove for any real deployment (HTTPS only).
+      INSECURE_COOKIES: ${STOREFRONT_INSECURE_COOKIES:-1}
+    ports:
+      - '3001:3001'
+    depends_on:
+      server:
+        condition: service_healthy
+
+  # Optional: creates two demo stores with owners, delivery methods and products (APP_ENV=dev only).
+  #   docker compose run --rm seed-demo
+  seed-demo:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    profiles: ['tools']
+    command: ['node', 'dist/scripts/seed-demo.js']
+    environment:
+      <<: *app-environment
+      DEMO_OWNER_PASSWORD: ${DEMO_OWNER_PASSWORD:-demo-password-123}
+      DEMO_STOREFRONT_URL: ${DEMO_STOREFRONT_URL:-}
+    depends_on:
+      server:
+        condition: service_healthy
+
+  # Optional: create any store. Example:
+  #   docker compose run --rm provision-store --name "Tienda A" --code tienda-a \
+  #     --owner-email dueno@tienda-a.com --owner-first-name Ana --owner-last-name Pérez
+  provision-store:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    profiles: ['tools']
+    entrypoint: ['node', 'dist/scripts/provision-store.js']
+    environment: *app-environment
+    depends_on:
+      server:
+        condition: service_healthy
 
 volumes:
   postgres_data:
