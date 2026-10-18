@@ -13,7 +13,7 @@ Estado inicial: ningún punto está resuelto. Cada punto pasa a "Resuelto" solo 
 | V7  | Una línea por producto vs. una sola línea con el total          | Pendiente (sandbox)       | Responsable                   |
 | V8  | Calculator por defecto = tarifa fija exacta                     | **Resuelto** (ver abajo)  | Implementación                |
 | V9  | `EmailPlugin`: remitente y plantilla por canal                  | Pendiente                 | Implementación                |
-| V10 | SDK 3.x en servidor, OAuth con SDK, `UuidIdStrategy` + `strict` | Pendiente                 | Implementación                |
+| V10 | SDK 3.x en servidor, OAuth con SDK, `UuidIdStrategy` + `strict` | **Resuelto** (ver abajo)  | Implementación                |
 
 Los detalles y los pasos de prueba se completan a medida que se implementa cada parte.
 
@@ -49,3 +49,9 @@ Los detalles y los pasos de prueba se completan a medida que se implementa cada 
 - Resultado observado: **un solo registro de Customer**, asignado a los dos canales. Las consultas `customers` filtradas por ese email devuelven el mismo `id` en la tienda A, en la tienda B y en el canal por defecto.
 - Consecuencia para producto: ambos locales ven el mismo cliente (nombre y email); los pedidos siguen separados por canal. Cualquier dato guardado en el Customer (por ejemplo direcciones de una cuenta registrada) es visible para todos los locales donde el comprador interactuó. Hay que reflejarlo en la política de privacidad (PRD 6.3) y no guardar en el Customer datos que no deban compartirse.
 - Prueba: `packages/commerce-core/e2e/purchase.e2e-spec.ts`, "V5: the same email as guest in two stores is ONE Customer record".
+
+### V10: dashboard con los campos propios del plugin y `strict` (resuelto, 2026-10-18)
+
+- El dashboard (React, Vendure 3.8) compila con la extensión del plugin, los campos propios del `Seller` y del `Channel`, y `UuidIdStrategy`.
+- Prueba: `apps/storefront-reference/e2e/dashboard.spec.ts` (Playwright, navegador real). El dueño de un local inicia sesión, `me { channels }` devuelve solo su canal, abre productos, pedidos, métodos de envío y la página "Mercado Pago" sin respuestas 4xx de la Admin API, y el botón de vinculación lleva a `auth.mercadopago.com/authorization` con `code_challenge_method=S256` y sin el `client_secret`.
+- Resumen de V10: servidor con `strict` y `UuidIdStrategy` (DEC-8), SDK `mercadopago` 3.6.1 desde CommonJS, OAuth por `fetch` porque el SDK no cubre PKCE (DEC-10), dashboard compatible (esta sección). Sin excepciones a `strict` en ningún paquete.

@@ -94,7 +94,9 @@ export const env = {
     webhookToleranceSeconds: Number(optional('MP_WEBHOOK_TOLERANCE_SECONDS') ?? 600),
     preferenceTtlMinutes: Number(optional('MP_PREFERENCE_TTL_MINUTES') ?? 30),
     preferenceItemsMode: (optional('MP_PREFERENCE_ITEMS_MODE') ?? 'lines') as 'lines' | 'total',
-    dashboardUrl: optional('MP_DASHBOARD_URL') ?? `${publicUrl}/dashboard`,
+    dashboardUrl: optional('MP_DASHBOARD_URL') ?? `${publicUrl}/dashboard/mercado-pago`,
+    // Tests and local demos only: accept http/local return URLs.
+    allowInsecureReturnUrls: bool('MP_ALLOW_INSECURE_RETURN_URLS', false),
   },
   smtp: {
     host: optional('SMTP_HOST'),

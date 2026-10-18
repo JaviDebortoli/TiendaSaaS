@@ -9,8 +9,11 @@
  * Nothing here talks to the real Mercado Pago.
  */
 import { RequestContextService, UserService } from '@vendure/core';
+import { DashboardPlugin } from '@vendure/dashboard/plugin';
 import gql from 'graphql-tag';
+import { existsSync } from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import { MercadoPagoConnectionService } from '../../../../packages/vendure-plugin-mercadopago/src';
 import { MercadoPagoMock } from '../../../../packages/vendure-plugin-mercadopago/e2e/mp-mock';
 import { sendWebhook } from '../../../../packages/vendure-plugin-mercadopago/e2e/shop-helpers';
@@ -25,13 +28,23 @@ const SELLER_ID = 7777;
 const ACCESS_TOKEN = 'APP_USR-e2e-store-token';
 const WEBHOOK_SECRET = 'test-webhook-secret';
 
+const DASHBOARD_DIR = path.resolve(__dirname, '../../../server/dist/dashboard');
+
 const mp = new MercadoPagoMock();
 mp.initPointBase = `http://localhost:${MP_PAGE_PORT}/checkout`;
 
 const env = createMpTestEnvironment(
   VENDURE_PORT,
   { allowInsecureReturnUrls: true, webhookSecret: WEBHOOK_SECRET },
-  { plugins: [PlatformPlugin.init({ ensureBaseData: false })] },
+  {
+    plugins: [
+      PlatformPlugin.init({ ensureBaseData: false }),
+      // Serves the built dashboard (npm run build:dashboard -w @tiendasaas/server) when it exists.
+      ...(existsSync(DASHBOARD_DIR)
+        ? [DashboardPlugin.init({ route: 'dashboard', appDir: DASHBOARD_DIR })]
+        : []),
+    ],
+  },
 );
 
 let nextPaymentId = 5000;

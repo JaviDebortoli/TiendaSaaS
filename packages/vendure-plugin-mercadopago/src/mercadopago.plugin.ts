@@ -75,6 +75,8 @@ import { MercadoPagoPluginOptions, resolveOptions, ResolvedMercadoPagoOptions } 
     ];
     return config;
   },
+  // Compiled next to this file; `npm run build` copies src/dashboard to dist/dashboard.
+  dashboard: './dashboard/index.tsx',
   compatibility: '^3.0.0',
 })
 export class MercadoPagoPlugin {
