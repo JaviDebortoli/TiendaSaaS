@@ -7,5 +7,5 @@ package-lock.json
 .atl
 **/generated/**
 **/gql/**
-PRD.md
+docs/PRD.md
 **/*.hbs

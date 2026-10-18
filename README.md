@@ -4,7 +4,7 @@ Tiendas online para locales comerciales de Argentina: **un backend de comercio c
 un canal por local), **un frontend a medida por local** que usa un paquete común, y cobro con
 **Mercado Pago directo en la cuenta de cada local**. Es un proyecto personal.
 
-La especificación es [`PRD.md`](PRD.md). Estado y decisiones: [`PLAN.md`](PLAN.md),
+La especificación es [`docs/PRD.md`](docs/PRD.md). Estado y decisiones: [`PLAN.md`](PLAN.md),
 [`DECISIONS.md`](DECISIONS.md), [`VERIFICATION.md`](VERIFICATION.md) (qué falta probar con credenciales
 reales). Despliegue a producción: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 

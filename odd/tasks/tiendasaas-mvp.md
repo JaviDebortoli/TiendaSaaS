@@ -1,11 +1,11 @@
 # tiendasaas-mvp
 
-Objective: build the MVP described in `PRD.md` (Vendure 3.8 multi-tenant + Mercado Pago plugin + commerce-core + reference storefront + Docker).
+Objective: build the MVP described in `docs/PRD.md` (Vendure 3.8 multi-tenant + Mercado Pago plugin + commerce-core + reference storefront + Docker).
 Branch: feat/mvp · Delivery: ask-on-risk, work-unit commits on the branch (push/PR are the user's call) · Runner: Vitest (+ Playwright for the storefront). Task detail and status also live in `PLAN.md`.
 
 ## Specs
 
-- S1: `PRD.md` is the specification; read section 16 for stack, versions and structure. Marks: [Doc] confirmed, [Diseño] decided (respect unless a concrete technical problem exists; tell the user before changing), [Verificar] assumption to confirm.
+- S1: `docs/PRD.md` is the specification; read section 16 for stack, versions and structure. Marks: [Doc] confirmed, [Diseño] decided (respect unless a concrete technical problem exists; tell the user before changing), [Verificar] assumption to confirm.
 - S2: "Antes de instalar dependencias, corré `npm view <paquete> version` para las principales y compará con la sección 16. Si una versión cambió, no la actualices en silencio: anotalo en `DECISIONS.md` con el motivo."
 - S3: Before each integration, review current official docs of Vendure and Mercado Pago **Argentina** (mercadopago.com.ar/developers). "Si algo contradice el PRD, no lo resuelvas en silencio: anotalo en `DECISIONS.md` y avisame."
 - S4: "Todo lo que está en la sección "Fuera del MVP" queda fuera. No lo implementes ni lo dejes a medias."

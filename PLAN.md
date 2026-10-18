@@ -1,6 +1,6 @@
 # Plan de desarrollo
 
-Fuente de verdad: `PRD.md`. Estado real al 2026-10-18. Convención: `[x]` hecho y verificado ·
+Fuente de verdad: `docs/PRD.md`. Estado real al 2026-10-18. Convención: `[x]` hecho y verificado ·
 `[~]` hecho, falta una verificación que depende de terceros · `[ ]` pendiente · `[!]` bloqueado.
 
 Documentos de apoyo: `DECISIONS.md` (desvíos y decisiones), `VERIFICATION.md` (puntos [Verificar] del
