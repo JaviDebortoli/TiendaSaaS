@@ -11,7 +11,7 @@ Estado inicial: ningún punto está resuelto. Cada punto pasa a "Resuelto" solo 
 | V5  | Mismo email como invitado en dos tiendas                        | Pendiente                 | Implementación                |
 | V6  | Lista completa de estados de pago                               | Pendiente (documentación) | Implementación                |
 | V7  | Una línea por producto vs. una sola línea con el total          | Pendiente (sandbox)       | Responsable                   |
-| V8  | Calculator por defecto = tarifa fija exacta                     | Pendiente                 | Implementación                |
+| V8  | Calculator por defecto = tarifa fija exacta                     | **Resuelto** (ver abajo)  | Implementación                |
 | V9  | `EmailPlugin`: remitente y plantilla por canal                  | Pendiente                 | Implementación                |
 | V10 | SDK 3.x en servidor, OAuth con SDK, `UuidIdStrategy` + `strict` | Pendiente                 | Implementación                |
 
@@ -31,3 +31,9 @@ Los detalles y los pasos de prueba se completan a medida que se implementa cada 
 - El SDK `mercadopago` 3.6.1 se carga desde CommonJS (`require`) sin problemas.
 - OAuth: el cliente del SDK no cubre PKCE ni `test_token`; se usa `fetch` (DEC-10).
 - Falta: compatibilidad del dashboard con los campos propios del plugin (T3/T4).
+
+### V8: el calculator por defecto de Vendure es tarifa fija exacta (resuelto, 2026-10-18)
+
+- Configuración usada por el alta de un local: `default-shipping-calculator` con `rate = <tarifa en centavos>`, `includesTax = include`, `taxRate = 0`.
+- Prueba: `apps/server/e2e/provisioning.e2e-spec.ts`, "the flat fee does not depend on the order (V8)". Con una tarifa de 123456 centavos, `eligibleShippingMethods` devuelve `price = 123456` y `priceWithTax = 123456` para carritos de 1, 3 y 7 unidades.
+- En `packages/vendure-plugin-mercadopago/e2e/checkout.e2e-spec.ts` el envío entra como línea de la preferencia y las líneas suman exactamente el total del pedido.

@@ -51,11 +51,13 @@ export function assertEnv(): void {
 
 const appEnv = optional('APP_ENV') ?? 'prod';
 
+const publicUrl = (optional('PUBLIC_URL') ?? 'http://localhost:3000').replace(/\/$/, '');
+
 export const env = {
   appEnv,
   isDev: appEnv === 'dev',
   port: Number(optional('PORT') ?? 3000),
-  publicUrl: (optional('PUBLIC_URL') ?? 'http://localhost:3000').replace(/\/$/, ''),
+  publicUrl,
   cookieSecret: required('COOKIE_SECRET'),
   corsOrigins: list('CORS_ORIGINS'),
   trustProxy: optional('TRUST_PROXY'),
@@ -79,6 +81,20 @@ export const env = {
     region: optional('S3_REGION') ?? 'us-east-1',
     forcePathStyle: bool('S3_FORCE_PATH_STYLE', true),
     assetUrlPrefix: optional('ASSET_URL_PREFIX'),
+  },
+  mercadoPago: {
+    clientId: optional('MP_CLIENT_ID') ?? '',
+    clientSecret: optional('MP_CLIENT_SECRET') ?? '',
+    webhookSecret: optional('MP_WEBHOOK_SECRET') ?? '',
+    redirectUri: optional('MP_REDIRECT_URI') ?? '',
+    tokenEncryptionKey: optional('MP_TOKEN_ENCRYPTION_KEY') ?? '',
+    webhookMode: (optional('MP_WEBHOOK_MODE') ?? 'application') as 'application' | 'preference',
+    requireSignatureInPreferenceMode: bool('MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE', true),
+    oauthTestToken: bool('MP_OAUTH_TEST_TOKEN', false),
+    webhookToleranceSeconds: Number(optional('MP_WEBHOOK_TOLERANCE_SECONDS') ?? 600),
+    preferenceTtlMinutes: Number(optional('MP_PREFERENCE_TTL_MINUTES') ?? 30),
+    preferenceItemsMode: (optional('MP_PREFERENCE_ITEMS_MODE') ?? 'lines') as 'lines' | 'total',
+    dashboardUrl: optional('MP_DASHBOARD_URL') ?? `${publicUrl}/dashboard`,
   },
   smtp: {
     host: optional('SMTP_HOST'),

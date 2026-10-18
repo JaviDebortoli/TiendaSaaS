@@ -11,7 +11,9 @@ import { defaultEmailHandlers, EmailPlugin, FileBasedTemplateLoader } from '@ven
 import { GraphiqlPlugin } from '@vendure/graphiql-plugin';
 import { HardenPlugin } from '@vendure/harden-plugin';
 import path from 'node:path';
+import { MercadoPagoPlugin } from 'vendure-plugin-mercadopago';
 import { env } from './env';
+import { PlatformPlugin } from './platform/platform.plugin';
 
 const emailTemplatesPath = path.join(
   path.dirname(require.resolve('@vendure/email-plugin/package.json')),
@@ -88,8 +90,15 @@ export const config: VendureConfig = {
       }),
     }),
     DefaultSchedulerPlugin.init(),
-    DefaultJobQueuePlugin.init({ useDatabaseForBuffer: true, pollInterval: 1000 }),
+    DefaultJobQueuePlugin.init({
+      useDatabaseForBuffer: true,
+      pollInterval: 1000,
+      // Webhook jobs are retried with growing delays: 5s, 10s, 20s, ... capped at 5 minutes.
+      backoffStrategy: (_queue, attempt) => Math.min(5000 * 2 ** (attempt - 1), 300_000),
+    }),
     DefaultSearchPlugin.init({ bufferUpdates: false, indexStockStatus: true }),
+    PlatformPlugin.init(),
+    MercadoPagoPlugin.init({ ...env.mercadoPago, publicUrl: env.publicUrl }),
     HardenPlugin.init({
       maxQueryComplexity: 500,
       apiMode: env.isDev ? 'dev' : 'prod',

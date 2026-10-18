@@ -13,12 +13,15 @@
     "start:worker": "node ./dist/index-worker.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.e2e.json --noEmit",
     "migration:generate": "ts-node src/migration-generate.ts",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "provision-store": "ts-node src/scripts/provision-store.ts",
+    "seed-demo": "ts-node src/scripts/seed-demo.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1152.0",
     "@aws-sdk/lib-storage": "^3.1152.0",
     "@vendure/asset-server-plugin": "3.8.0",
+    "@vendure/common": "3.8.0",
     "@vendure/core": "3.8.0",
     "@vendure/dashboard": "3.8.0",
     "@vendure/email-plugin": "3.8.0",
@@ -26,7 +29,8 @@
     "@vendure/harden-plugin": "3.8.0",
     "dotenv": "^17.0.0",
     "pg": "^8.23.1",
-    "typeorm": "^0.3.21"
+    "typeorm": "^0.3.21",
+    "vendure-plugin-mercadopago": "*"
   },
   "devDependencies": {
     "@swc/core": "^1.16.18",
