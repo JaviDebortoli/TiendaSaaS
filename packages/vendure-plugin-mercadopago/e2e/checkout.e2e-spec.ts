@@ -330,3 +330,31 @@ describe('syncMercadoPagoPayment (PRD 9.6 step 6)', () => {
     },
   );
 });
+
+describe('reading the order while it is being paid', () => {
+  const ORDER_BY_CODE = gql`
+    query ($code: String!) {
+      orderByCode(code: $code) {
+        code
+        state
+      }
+    }
+  `;
+
+  it('lets the buyer session read its own order by code before it is placed', async () => {
+    const order = await checkoutAsGuest(shopClient, store, payable);
+
+    const { orderByCode } = await shopClient.query(ORDER_BY_CODE, { code: order.code });
+
+    expect(orderByCode).toEqual({ code: order.code, state: 'ArrangingPayment' });
+  });
+
+  it('does not let another session read it', async () => {
+    const order = await checkoutAsGuest(shopClient, store, payable);
+    await shopClient.asAnonymousUser(); // a different buyer
+
+    await expect(shopClient.query(ORDER_BY_CODE, { code: order.code })).rejects.toThrow(
+      /not currently authorized/i,
+    );
+  });
+});

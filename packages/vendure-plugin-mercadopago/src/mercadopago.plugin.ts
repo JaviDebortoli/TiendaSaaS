@@ -13,6 +13,7 @@ import { channelCustomFields } from './custom-fields';
 import { MercadoPagoConnection } from './entities/mercadopago-connection.entity';
 import { MercadoPagoOAuthState } from './entities/mercadopago-oauth-state.entity';
 import { MercadoPagoPaymentClaim } from './entities/mercadopago-payment-claim.entity';
+import { SessionOrderByCodeAccessStrategy } from './order-access';
 import { manageMercadoPago } from './permissions';
 import { mercadoPagoConnectedChecker, mercadoPagoHandler } from './payment/mercadopago-handler';
 import { MercadoPagoCipherService } from './services/cipher.service';
@@ -55,6 +56,10 @@ import { MercadoPagoPluginOptions, resolveOptions, ResolvedMercadoPagoOptions } 
   },
   configuration: (config) => {
     config.paymentOptions.paymentMethodHandlers.push(mercadoPagoHandler);
+    // The result screen reads the order while it is still being paid.
+    config.orderOptions.orderByCodeAccessStrategy = new SessionOrderByCodeAccessStrategy(
+      config.orderOptions.orderByCodeAccessStrategy,
+    );
     config.paymentOptions.paymentMethodEligibilityCheckers = [
       ...(config.paymentOptions.paymentMethodEligibilityCheckers ?? []),
       mercadoPagoConnectedChecker,

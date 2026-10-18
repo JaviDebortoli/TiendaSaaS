@@ -7,8 +7,8 @@ Estado inicial: ningún punto está resuelto. Cada punto pasa a "Resuelto" solo 
 | V1  | Webhook a nivel aplicación recibe pagos de locales vía OAuth    | Pendiente (sandbox)       | Responsable, con credenciales |
 | V2  | Firma `x-signature` en notificaciones a `notification_url`      | Pendiente (sandbox)       | Responsable, con credenciales |
 | V3  | `WebhookSignatureValidator` en `mercadopago` 3.x                | **Resuelto** (ver abajo)  | Implementación                |
-| V4  | Compra como invitado con email ya registrado                    | Pendiente                 | Implementación / sandbox      |
-| V5  | Mismo email como invitado en dos tiendas                        | Pendiente                 | Implementación                |
+| V4  | Compra como invitado con email ya registrado                    | **Resuelto** (ver abajo)  | Implementación / sandbox      |
+| V5  | Mismo email como invitado en dos tiendas                        | **Resuelto** (ver abajo)  | Implementación                |
 | V6  | Lista completa de estados de pago                               | Pendiente (documentación) | Implementación                |
 | V7  | Una línea por producto vs. una sola línea con el total          | Pendiente (sandbox)       | Responsable                   |
 | V8  | Calculator por defecto = tarifa fija exacta                     | **Resuelto** (ver abajo)  | Implementación                |
@@ -37,3 +37,15 @@ Los detalles y los pasos de prueba se completan a medida que se implementa cada 
 - Configuración usada por el alta de un local: `default-shipping-calculator` con `rate = <tarifa en centavos>`, `includesTax = include`, `taxRate = 0`.
 - Prueba: `apps/server/e2e/provisioning.e2e-spec.ts`, "the flat fee does not depend on the order (V8)". Con una tarifa de 123456 centavos, `eligibleShippingMethods` devuelve `price = 123456` y `priceWithTax = 123456` para carritos de 1, 3 y 7 unidades.
 - En `packages/vendure-plugin-mercadopago/e2e/checkout.e2e-spec.ts` el envío entra como línea de la preferencia y las líneas suman exactamente el total del pedido.
+
+### V4: compra como invitado con un email que ya tiene cuenta (resuelto, 2026-10-18)
+
+- Comportamiento por defecto de Vendure 3.8, sin cambios: `setCustomerForOrder` responde `EMAIL_ADDRESS_CONFLICT_ERROR` cuando el email pertenece a una cuenta registrada y quien compra no inició sesión. `commerce-core` lo expone como `CommerceError` con ese `code` y la tienda debe pedir iniciar sesión.
+- Se mantiene el valor por defecto (`allowGuestCheckoutForRegisteredCustomers: false`) a propósito: permitir lo contrario deja que cualquiera cargue pedidos en la cuenta de otra persona con solo saber su email. Si el responsable prefiere lo contrario, el ajuste es la `GuestCheckoutStrategy` (plan B del PRD).
+- Prueba: `packages/commerce-core/e2e/purchase.e2e-spec.ts`, "V4: a registered email cannot be used for a guest checkout".
+
+### V5: el mismo email como invitado en dos tiendas (resuelto, 2026-10-18)
+
+- Resultado observado: **un solo registro de Customer**, asignado a los dos canales. Las consultas `customers` filtradas por ese email devuelven el mismo `id` en la tienda A, en la tienda B y en el canal por defecto.
+- Consecuencia para producto: ambos locales ven el mismo cliente (nombre y email); los pedidos siguen separados por canal. Cualquier dato guardado en el Customer (por ejemplo direcciones de una cuenta registrada) es visible para todos los locales donde el comprador interactuó. Hay que reflejarlo en la política de privacidad (PRD 6.3) y no guardar en el Customer datos que no deban compartirse.
+- Prueba: `packages/commerce-core/e2e/purchase.e2e-spec.ts`, "V5: the same email as guest in two stores is ONE Customer record".
