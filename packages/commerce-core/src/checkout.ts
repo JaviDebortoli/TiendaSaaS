@@ -28,6 +28,14 @@ export interface ReturnUrls {
   pendingUrl: string;
 }
 
+export interface StartPaymentOptions {
+  /**
+   * The total (cents) the buyer saw on the review screen. If the order no longer adds up to it,
+   * `startPayment` throws a `CommerceError` with code `ORDER_CHANGED` and creates nothing.
+   */
+  expectedTotal?: number;
+}
+
 export interface StartedPayment {
   orderCode: string;
   /** Redirect the buyer here to pay on Mercado Pago. */
@@ -108,16 +116,28 @@ export function createCheckout(transport: Transport) {
      * the server's explanation in `details.transitionError`, so the storefront can send the buyer
      * back to the delivery step.
      */
-    async startPayment(urls: ReturnUrls): Promise<StartedPayment> {
+    async startPayment(
+      urls: ReturnUrls,
+      options: StartPaymentOptions = {},
+    ): Promise<StartedPayment> {
       const { activeOrder } = await transport.request(ActiveOrderQuery);
       if (!activeOrder) {
         throw new CommerceError(ErrorCodes.NoActiveOrder, 'There is no active cart.');
       }
+      let current: { totalWithTax: number } = activeOrder;
       if (activeOrder.state !== 'ArrangingPayment') {
         const { transitionOrderToState } = await transport.request(TransitionOrderMutation, {
           state: 'ArrangingPayment',
         });
-        unwrap(transitionOrderToState);
+        current = unwrap(transitionOrderToState) as Cart;
+      }
+      // Vendure swaps a delivery method that stopped qualifying without raising an error, which
+      // changes the total. If the buyer reviewed another total, stop instead of charging this one.
+      if (options.expectedTotal !== undefined && current.totalWithTax !== options.expectedTotal) {
+        throw new CommerceError('ORDER_CHANGED', 'The order changed after the buyer reviewed it.', {
+          expectedTotal: options.expectedTotal,
+          currentTotal: current.totalWithTax,
+        });
       }
       const { createMercadoPagoCheckout } = await transport.request(
         CreateMercadoPagoCheckoutMutation,

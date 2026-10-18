@@ -64,7 +64,7 @@ export class MercadoPagoWebhookService implements OnModuleInit {
   async handle(job: WebhookJob): Promise<void> {
     if (job.kind === 'connect') {
       const result = await this.connections.reconcileAfterConnectNotification(job.mpUserId);
-      Logger.verbose(`mp-connect for seller ${job.mpUserId}: ${result}`, loggerCtx);
+      Logger.info(`mp-connect for seller ${job.mpUserId}: ${result}`, loggerCtx);
       return;
     }
     const result = await this.processor.process({
@@ -72,7 +72,7 @@ export class MercadoPagoWebhookService implements OnModuleInit {
       mpUserId: job.mpUserId,
       channelId: job.channelId,
     });
-    Logger.verbose(
+    Logger.info(
       `Payment ${job.mpPaymentId}: ${result.outcome}${'reason' in result ? ` (${result.reason})` : ''}`,
       loggerCtx,
     );

@@ -677,3 +677,161 @@ describe('the default channel stays out of reach of the storefronts (PRD 5.2)', 
     expect(products.items.map((p: { name: string }) => p.name)).not.toContain('Default Product');
   });
 });
+
+describe('a delivery method that stops being eligible before payment (PRD 9.6 step 1, V11)', () => {
+  it('is swapped for one that qualifies, with no error (V11): storefronts must show the current method', async () => {
+    // storeA: delivery needs at least $5.000,00. A cart above it qualifies...
+    await asOwner(storeA, storeA.generatedPassword!);
+    const { createProduct } = await adminClient.query(
+      gql`
+        mutation ($input: CreateProductInput!) {
+          createProduct(input: $input) {
+            id
+          }
+        }
+      `,
+      {
+        input: {
+          translations: [
+            {
+              languageCode: 'es',
+              name: 'Torta grande',
+              slug: `torta-${Date.now()}`,
+              description: '',
+            },
+          ],
+        },
+      },
+    );
+    const { createProductVariants } = await adminClient.query(
+      gql`
+        mutation ($input: [CreateProductVariantInput!]!) {
+          createProductVariants(input: $input) {
+            id
+          }
+        }
+      `,
+      {
+        input: [
+          {
+            productId: createProduct.id,
+            sku: `TORTA-${Date.now()}`,
+            price: 100000,
+            stockOnHand: 100,
+            translations: [{ languageCode: 'es', name: 'Torta grande' }],
+          },
+        ],
+      },
+    );
+    shopClient.setChannelToken(storeA.token);
+    await shopClient.asAnonymousUser();
+    const { addItemToOrder } = await shopClient.query(
+      gql`
+        mutation ($id: ID!) {
+          addItemToOrder(productVariantId: $id, quantity: 6) {
+            ... on Order {
+              lines {
+                id
+              }
+            }
+          }
+        }
+      `,
+      { id: createProductVariants[0].id },
+    );
+    const lineId = addItemToOrder.lines[0].id;
+    await shopClient.query(gql`
+      mutation {
+        setCustomerForOrder(
+          input: { emailAddress: "uno@example.test", firstName: "U", lastName: "No" }
+        ) {
+          ... on Order {
+            id
+          }
+        }
+      }
+    `);
+    await shopClient.query(gql`
+      mutation {
+        setOrderShippingAddress(
+          input: { fullName: "Uno", streetLine1: "Calle 1", city: "Rosario", countryCode: "AR" }
+        ) {
+          ... on Order {
+            id
+          }
+        }
+      }
+    `);
+    const { eligibleShippingMethods } = await shopClient.query(gql`
+      query {
+        eligibleShippingMethods {
+          id
+          code
+        }
+      }
+    `);
+    const flat = eligibleShippingMethods.find(
+      (m: { code: string }) => m.code === 'panaderia-flat-rate',
+    );
+    expect(flat).toBeDefined();
+    await shopClient.query(
+      gql`
+        mutation ($id: [ID!]!) {
+          setOrderShippingMethod(shippingMethodId: $id) {
+            ... on Order {
+              id
+            }
+          }
+        }
+      `,
+      { id: [flat.id] },
+    );
+
+    // ...and the buyer lowers the quantity below the minimum before paying.
+    await shopClient.query(
+      gql`
+        mutation ($id: ID!) {
+          adjustOrderLine(orderLineId: $id, quantity: 1) {
+            ... on Order {
+              id
+            }
+          }
+        }
+      `,
+      { id: lineId },
+    );
+    // Vendure does not raise an error: as soon as the order changes it swaps a delivery method
+    // that no longer qualifies for the first one that does (here: pickup, free).
+    const { activeOrder } = await shopClient.query(gql`
+      query {
+        activeOrder {
+          shippingWithTax
+          shippingLines {
+            shippingMethod {
+              code
+            }
+          }
+        }
+      }
+    `);
+    expect(
+      activeOrder.shippingLines.map(
+        (l: { shippingMethod: { code: string } }) => l.shippingMethod.code,
+      ),
+    ).toEqual(['panaderia-pickup']);
+    expect(activeOrder.shippingWithTax).toBe(0);
+
+    // Moving to payment then succeeds with the new, current delivery method.
+    const { transitionOrderToState } = await shopClient.query(gql`
+      mutation {
+        transitionOrderToState(state: "ArrangingPayment") {
+          __typename
+          ... on Order {
+            state
+          }
+        }
+      }
+    `);
+    expect(transitionOrderToState).toEqual({ __typename: 'Order', state: 'ArrangingPayment' });
+  });
+});

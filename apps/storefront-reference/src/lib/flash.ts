@@ -24,6 +24,8 @@ export function messageFor(error: unknown): string {
         return 'Esta tienda no puede cobrar en este momento. Probá más tarde.';
       case 'ORDER_STATE_TRANSITION_ERROR':
         return 'La forma de entrega elegida ya no está disponible. Elegí otra.';
+      case 'ORDER_CHANGED':
+        return 'Tu pedido cambió mientras lo revisabas. Revisá el total y la entrega antes de pagar.';
       case 'NO_ACTIVE_ORDER':
         return 'Tu carrito está vacío.';
       case 'NETWORK_ERROR':

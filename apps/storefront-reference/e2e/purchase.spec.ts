@@ -89,6 +89,27 @@ test.describe('checkout', () => {
     await expect(page.getByText('$ 1.500,00', { exact: false }).first()).toBeVisible();
   });
 
+  test('refuses to charge an order that changed after the buyer reviewed it', async ({
+    page,
+    context,
+  }) => {
+    await addFirstProduct(page);
+    await fillDetails(page);
+    await chooseDelivery(page, 'Retiro en el local'); // the review screen, with its total
+
+    // In another tab of the same browser the buyer changes the quantity.
+    const other = await context.newPage();
+    await other.goto('/cart');
+    await other.getByRole('spinbutton').fill('2');
+    await other.getByRole('button', { name: 'Actualizar' }).click();
+    await expect(other.getByRole('link', { name: /Carrito \(2\)/ })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Pagar con Mercado Pago' }).click();
+
+    await expect(page.getByText(/Tu pedido cambió mientras lo revisabas/)).toBeVisible();
+    await expect(page).toHaveURL(/\/checkout\/pay/);
+  });
+
   test('an empty cart cannot be checked out', async ({ page }) => {
     await page.goto('/checkout');
 

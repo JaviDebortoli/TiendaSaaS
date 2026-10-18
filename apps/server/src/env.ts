@@ -92,6 +92,8 @@ export const env = {
     requireSignatureInPreferenceMode: bool('MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE', true),
     oauthTestToken: bool('MP_OAUTH_TEST_TOKEN', false),
     webhookToleranceSeconds: Number(optional('MP_WEBHOOK_TOLERANCE_SECONDS') ?? 600),
+    requireOfflineAccess: bool('MP_REQUIRE_OFFLINE_ACCESS', true),
+    authUrl: optional('MP_AUTH_URL') ?? 'https://auth.mercadopago.com',
     preferenceTtlMinutes: Number(optional('MP_PREFERENCE_TTL_MINUTES') ?? 30),
     preferenceItemsMode: (optional('MP_PREFERENCE_ITEMS_MODE') ?? 'lines') as 'lines' | 'total',
     dashboardUrl: optional('MP_DASHBOARD_URL') ?? `${publicUrl}/dashboard/mercado-pago`,

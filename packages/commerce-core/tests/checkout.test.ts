@@ -210,6 +210,55 @@ describe('checkout', () => {
       expect(shop.called('CreateMercadoPagoCheckout')).toHaveLength(0);
     });
 
+    it('refuses to charge a total the buyer did not review (ORDER_CHANGED)', async () => {
+      shop.on('ActiveOrder', {
+        activeOrder: order({ state: 'ArrangingPayment', totalWithTax: 100000 }),
+      });
+
+      const failure = await store()
+        .checkout.startPayment(urls, { expectedTotal: 250000 })
+        .catch((e: unknown) => e);
+
+      expect(failure).toMatchObject({
+        code: 'ORDER_CHANGED',
+        details: { expectedTotal: 250000, currentTotal: 100000 },
+      });
+      expect(shop.called('CreateMercadoPagoCheckout')).toHaveLength(0);
+    });
+
+    it('also compares against the total after the transition to payment', async () => {
+      shop.on('ActiveOrder', {
+        activeOrder: order({ state: 'AddingItems', totalWithTax: 250000 }),
+      });
+      shop.on('TransitionOrder', {
+        transitionOrderToState: order({ state: 'ArrangingPayment', totalWithTax: 100000 }),
+      });
+
+      await expect(
+        store().checkout.startPayment(urls, { expectedTotal: 250000 }),
+      ).rejects.toMatchObject({ code: 'ORDER_CHANGED' });
+      expect(shop.called('CreateMercadoPagoCheckout')).toHaveLength(0);
+    });
+
+    it('goes ahead when the total is the one the buyer reviewed', async () => {
+      shop.on('ActiveOrder', {
+        activeOrder: order({ state: 'ArrangingPayment', totalWithTax: 100000 }),
+      });
+      shop.on('CreateMercadoPagoCheckout', {
+        createMercadoPagoCheckout: {
+          __typename: 'MercadoPagoCheckout',
+          preferenceId: 'p',
+          initPoint: 'https://mp.test/p',
+          sandboxInitPoint: null,
+          expiresAt: '2026-10-18T20:30:00.000Z',
+        },
+      });
+
+      const started = await store().checkout.startPayment(urls, { expectedTotal: 100000 });
+
+      expect(started.redirectUrl).toBe('https://mp.test/p');
+    });
+
     it('fails clearly when there is no cart', async () => {
       shop.on('ActiveOrder', { activeOrder: null });
 

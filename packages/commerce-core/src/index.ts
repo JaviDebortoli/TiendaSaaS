@@ -30,7 +30,7 @@ export { memorySession } from './session';
 export type { SessionStore } from './session';
 export type { CommerceConfig } from './client';
 export type { SearchOptions } from './catalog';
-export type { ReturnUrls, StartedPayment } from './checkout';
+export type { ReturnUrls, StartPaymentOptions, StartedPayment } from './checkout';
 export type { PaymentResult, PaymentState, WaitForPaymentOptions } from './payment';
 export type { Registration } from './account';
 export type * from './types';

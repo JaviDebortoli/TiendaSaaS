@@ -15,7 +15,8 @@
     "migration:generate": "ts-node src/migration-generate.ts",
     "test": "vitest run --passWithNoTests",
     "provision-store": "ts-node src/scripts/provision-store.ts",
-    "seed-demo": "ts-node src/scripts/seed-demo.ts"
+    "seed-demo": "ts-node src/scripts/seed-demo.ts",
+    "refresh-connections": "ts-node src/scripts/refresh-connections.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1152.0",

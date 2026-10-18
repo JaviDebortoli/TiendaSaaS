@@ -51,16 +51,21 @@ export async function chooseDeliveryAction(form: FormData) {
  * Step 3: asks the server for the Mercado Pago page and sends the buyer there. Nothing is
  * confirmed here: the result page asks the server what happened.
  */
-export async function startPaymentAction() {
+export async function startPaymentAction(form: FormData) {
+  // The total shown on the review screen: the order must still add up to it.
+  const expectedTotal = Number(field(form, 'expectedTotal'));
   const commerce = await getCommerce();
   const { publicUrl } = getConfig();
 
   const result = await attempt(() =>
-    commerce.checkout.startPayment({
-      successUrl: `${publicUrl}/checkout/result?outcome=success`,
-      failureUrl: `${publicUrl}/checkout/result?outcome=failure`,
-      pendingUrl: `${publicUrl}/checkout/result?outcome=pending`,
-    }),
+    commerce.checkout.startPayment(
+      {
+        successUrl: `${publicUrl}/checkout/result?outcome=success`,
+        failureUrl: `${publicUrl}/checkout/result?outcome=failure`,
+        pendingUrl: `${publicUrl}/checkout/result?outcome=pending`,
+      },
+      Number.isInteger(expectedTotal) ? { expectedTotal } : {},
+    ),
   );
   if (!result.ok) redirectWithError('/checkout/pay', result.message);
   redirect(result.value.redirectUrl);

@@ -1,21 +1,217 @@
 # Verificación de los puntos [Verificar] (PRD sección 13)
 
-Estado inicial: ningún punto está resuelto. Cada punto pasa a "Resuelto" solo con evidencia escrita acá.
+Un punto pasa a **Resuelto** solo con evidencia escrita en este archivo. Los que ya están resueltos
+tienen su evidencia en "Evidencia"; los pendientes necesitan credenciales de Mercado Pago y se
+prueban con los pasos de "Pruebas de sandbox".
 
-| #   | Punto                                                           | Estado                    | Quién lo resuelve             |
-| --- | --------------------------------------------------------------- | ------------------------- | ----------------------------- |
-| V1  | Webhook a nivel aplicación recibe pagos de locales vía OAuth    | Pendiente (sandbox)       | Responsable, con credenciales |
-| V2  | Firma `x-signature` en notificaciones a `notification_url`      | Pendiente (sandbox)       | Responsable, con credenciales |
-| V3  | `WebhookSignatureValidator` en `mercadopago` 3.x                | **Resuelto** (ver abajo)  | Implementación                |
-| V4  | Compra como invitado con email ya registrado                    | **Resuelto** (ver abajo)  | Implementación / sandbox      |
-| V5  | Mismo email como invitado en dos tiendas                        | **Resuelto** (ver abajo)  | Implementación                |
-| V6  | Lista completa de estados de pago                               | Pendiente (documentación) | Implementación                |
-| V7  | Una línea por producto vs. una sola línea con el total          | Pendiente (sandbox)       | Responsable                   |
-| V8  | Calculator por defecto = tarifa fija exacta                     | **Resuelto** (ver abajo)  | Implementación                |
-| V9  | `EmailPlugin`: remitente y plantilla por canal                  | **Resuelto** (ver abajo)  | Implementación                |
-| V10 | SDK 3.x en servidor, OAuth con SDK, `UuidIdStrategy` + `strict` | **Resuelto** (ver abajo)  | Implementación                |
+| #   | Punto                                                           | Estado                 | Quién lo resuelve               |
+| --- | --------------------------------------------------------------- | ---------------------- | ------------------------------- |
+| V1  | Webhook a nivel aplicación recibe pagos de locales vía OAuth    | **Pendiente** (ver V1) | Responsable, con credenciales   |
+| V2  | Firma `x-signature` en notificaciones a `notification_url`      | **Pendiente** (ver V2) | Responsable, con credenciales   |
+| V3  | `WebhookSignatureValidator` en `mercadopago` 3.x                | **Resuelto**           | Implementación                  |
+| V4  | Compra como invitado con email ya registrado                    | **Resuelto**           | Implementación                  |
+| V5  | Mismo email como invitado en dos tiendas                        | **Resuelto**           | Implementación                  |
+| V6  | Lista completa de estados de pago                               | **Pendiente** (ver V6) | Responsable (una consulta real) |
+| V7  | Una línea por producto vs. una sola línea con el total          | **Pendiente** (ver V7) | Responsable, con credenciales   |
+| V8  | Calculator por defecto = tarifa fija exacta                     | **Resuelto**           | Implementación                  |
+| V9  | `EmailPlugin`: remitente y plantilla por canal                  | **Resuelto**           | Implementación                  |
+| V10 | SDK 3.x en servidor, OAuth con SDK, `UuidIdStrategy` + `strict` | **Resuelto**           | Implementación                  |
 
-Los detalles y los pasos de prueba se completan a medida que se implementa cada parte.
+Puntos que aparecieron al implementar (no estaban en el PRD):
+
+| #   | Punto                                                                         | Estado                  | Quién lo resuelve             |
+| --- | ----------------------------------------------------------------------------- | ----------------------- | ----------------------------- |
+| V11 | Qué pasa si el envío deja de ser elegible al pasar a pago (PRD 9.6 paso 1)    | **Resuelto**            | Implementación                |
+| V12 | Respuesta de la renovación del token (campos, rotación, `expires_in`)         | **Pendiente** (ver V12) | Responsable, con credenciales |
+| V13 | Cuerpo y llegada de las notificaciones `mp-connect`                           | **Pendiente** (ver V13) | Responsable, con credenciales |
+| V14 | `expiration_date_from` en el pasado y clave de idempotencia de la preferencia | **Pendiente** (ver V14) | Responsable, con credenciales |
+| V15 | Mensaje de Mercado Pago al reembolsar sin saldo                               | **Pendiente** (ver V15) | Responsable, con credenciales |
+| V16 | Parámetros de la redirección de vuelta y demora de `auto_return`              | **Pendiente** (ver V16) | Responsable, con credenciales |
+| V17 | El `scope` que devuelve el OAuth incluye `offline_access`                     | **Pendiente** (ver V17) | Responsable, con credenciales |
+| V18 | Unidad de `ts` en `x-signature` (segundos o milisegundos)                     | **Pendiente** (ver V18) | Responsable, con credenciales |
+
+Las pruebas automáticas cubren todo lo demás con una API de Mercado Pago simulada. Lo que no pueden
+probar es lo que Mercado Pago hace de verdad: eso es lo que listan los puntos pendientes.
+
+---
+
+## Pruebas de sandbox
+
+### Preparación común (una sola vez)
+
+Mercado Pago no puede llamar a `localhost`, y las URLs de retorno no pueden ser locales. Hace falta
+una dirección pública con HTTPS y **subdominio fijo** (la `redirect_uri` de OAuth tiene que ser
+estática). Cualquier túnel que lo permita sirve (por ejemplo un Cloudflare Tunnel con un dominio
+propio, o un dominio reservado de ngrok).
+
+1. **Dos direcciones públicas**: una apunta al puerto 3000 (servidor) y otra al 3001 (tienda).
+   Ejemplos en esta guía: `https://api.midominio.com` y `https://tienda.midominio.com`.
+2. **Aplicación de Mercado Pago** en <https://www.mercadopago.com.ar/developers/panel/app> (producto
+   Checkout Pro). En sus detalles:
+   - **URL de redireccionamiento (OAuth)**: `https://api.midominio.com/mercadopago/oauth/callback`.
+   - Activar el **flujo con PKCE**.
+   - Copiar el **Client ID** y el **Client secret**.
+3. **Webhooks** (Tus integraciones › Webhooks › Configurar notificaciones › modo producción):
+   - URL: `https://api.midominio.com/mercadopago/webhook`.
+   - Eventos: **Pagos** y **Vinculación de aplicaciones** (tópico `mp-connect`).
+   - Guardar la configuración: genera la **clave secreta**.
+4. **Cuentas de prueba** (Tus integraciones › Cuentas de prueba): dos vendedores y un comprador, los
+   tres de Argentina. Anotar usuario, contraseña y el código de 6 dígitos de cada una (se pide si hay
+   verificación por email). No se pueden borrar y hay un máximo de 15.
+5. **`.env`** (en la raíz del repositorio):
+
+   ```
+   PUBLIC_URL=https://api.midominio.com
+   STOREFRONT_PUBLIC_URL=https://tienda.midominio.com
+   MP_CLIENT_ID=...
+   MP_CLIENT_SECRET=...
+   MP_WEBHOOK_SECRET=...            # la clave secreta del paso 3
+   MP_REDIRECT_URI=https://api.midominio.com/mercadopago/oauth/callback
+   MP_TOKEN_ENCRYPTION_KEY=...      # openssl rand -base64 32
+   MP_OAUTH_TEST_TOKEN=true         # el canje genera credenciales de sandbox
+   ```
+
+6. `docker compose up --build` y, en otra terminal, `docker compose run --rm seed-demo`.
+7. **Dominio de la tienda en el canal**: como superadmin (`SUPERADMIN_USERNAME` / `SUPERADMIN_PASSWORD`,
+   en `https://api.midominio.com/dashboard`) abrir Ajustes › Canales › _Panadería Don Juan_ y completar
+   **Storefront URL** con `https://tienda.midominio.com`. Es el único origen aceptado para las URLs de
+   retorno de Mercado Pago.
+8. **Vincular el vendedor de prueba 1**: entrar al dashboard como `dueno@panaderia-demo.test`
+   (contraseña `DEMO_OWNER_PASSWORD`, por defecto `demo-password-123`), abrir Ajustes › Mercado Pago
+   y pulsar **Conectar Mercado Pago**. Iniciar sesión con el vendedor de prueba 1 y autorizar. Tiene
+   que volver al dashboard con "Tu cuenta de Mercado Pago quedó vinculada." y estado "Conectada".
+9. Ver los registros mientras se prueba: `docker compose logs -f server worker`. Cada notificación
+   aceptada deja una línea `Webhook received: topic=... id=... user_id=... signed=...` y el resultado
+   (`Payment <id>: settled | pending | ...`).
+
+**Cómo registrar la evidencia**: en cada punto, agregar abajo (sección "Evidencia") la fecha, qué se
+hizo, qué se vio (líneas de log sin tokens, capturas) y la conclusión, y pasar el punto a Resuelto.
+
+### V1: el webhook de la aplicación recibe los pagos de los locales
+
+El diseño (PRD 9.7) supone que las notificaciones llegan a la URL de la aplicación y que traen el
+`user_id` del vendedor. Los pagos hechos con credenciales de prueba **no envían notificaciones**
+(PRD 12), así que hay dos partes:
+
+- **A. La URL y la firma funcionan.** En Webhooks › **Simular**: URL de producción, evento
+  **Pagos**, Data ID `123456789`, **Enviar prueba**. Esperado: la herramienta muestra respuesta
+  `200` y en el log aparece `Webhook received: topic=payment id=123456789 user_id=... signed=yes`
+  seguido de `Payment 123456789: ignored (...)` (el pago no existe, es lo correcto). Una respuesta
+  `401` significa que `MP_WEBHOOK_SECRET` no es la clave de esa aplicación.
+- **B. Los pagos reales de un local llegan.** Con una cuenta real propia como local (PRD 12):
+  poner `MP_OAUTH_TEST_TOKEN=false`, reiniciar, desconectar el vendedor de prueba y vincular tu cuenta
+  real. Con otra cuenta o tarjeta real, comprar algo de **$1** en la tienda. Esperado:
+  `Webhook received: topic=payment ... user_id=<id de la cuenta vinculada>` y el pedido en
+  `PaymentSettled` **sin** haber usado el respaldo (en el log no aparece `syncMercadoPagoPayment`).
+- **Si no llega** (o llega sin el `user_id` del local): V1 falla. Plan B: `MP_WEBHOOK_MODE=preference`
+  (cada preferencia lleva su `notification_url` con el canal en la ruta), reiniciar y repetir B.
+  Anotar el resultado y seguir con V2.
+
+### V2: ¿las notificaciones a `notification_url` vienen con `x-signature`?
+
+Solo hace falta si V1 falló. Con `MP_WEBHOOK_MODE=preference` y
+`MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE=true` (por defecto), repetir la compra de $1.
+
+- Si el pedido se liquida: las notificaciones vienen firmadas con la clave de la aplicación.
+  Línea de log: `... signed=yes route=channel`.
+- Si el log dice `Rejected webhook (MissingSignatureHeader)`: vienen sin firma. Poner
+  `MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE=false`, reiniciar y repetir: el pedido se liquida igual,
+  porque la verdad es siempre la consulta del pago con el token del local. Dejarlo anotado: en ese
+  modo cualquiera puede _provocar_ una consulta, pero no cambiar el resultado.
+
+### V6: lista completa de estados de pago
+
+La tabla de estados (`packages/vendure-plugin-mercadopago/src/lib/status.ts`) usa los nueve que
+documenta Mercado Pago para pagos: `pending`, `approved`, `authorized`, `in_process`,
+`in_mediation`, `rejected`, `cancelled`, `refunded`, `charged_back`. Cualquier otro valor queda como
+`unknown` y **nunca** liquida un pedido (hay una prueba).
+
+Para cerrar el punto, con el vendedor de prueba vinculado, pagar con tarjetas de prueba cambiando el
+nombre del titular según la guía de tarjetas de prueba de Mercado Pago (`APRO` aprobado, `CONT`
+pendiente, `OTHE` rechazo general; hay más: `CALL`, `FUND`, `SECU`, `EXPI`, `FORM`) y anotar el
+`status` y el `status_detail` que figuran en el log (`Payment <id>: ...`) y en las notas del pedido
+(dashboard › Pedidos). Si aparece un estado que no está en la lista, agregarlo a `status.ts` con su
+prueba y anotarlo acá. Un reembolso parcial debería dejar `approved` con
+`status_detail: partially_refunded`.
+
+### V7: ¿una línea por producto o una sola línea con el total?
+
+Por defecto la preferencia lleva una línea por producto más una de envío (`MP_PREFERENCE_ITEMS_MODE=lines`)
+y cae sola a una línea con el total si las líneas no suman exactamente el total del pedido.
+
+1. Comprar en la tienda 2 productos distintos, con un cupón de descuento (crear uno en el dashboard
+   › Marketing) y envío a domicilio.
+2. En la pantalla de Mercado Pago comprobar que los ítems y el **total** coinciden con el pedido.
+3. Si Mercado Pago muestra otro total, redondea mal o rechaza la preferencia: poner
+   `MP_PREFERENCE_ITEMS_MODE=total` (una sola línea con el total y el código del pedido), reiniciar y
+   repetir.
+
+Dejar anotado cuál modo queda como valor por defecto.
+
+### V12: respuesta de la renovación del token
+
+La guía de renovación solo documenta `access_token` y `refresh_token` (DEC-11). Con el local vinculado:
+
+```
+docker compose run --rm refresh-connections --all
+```
+
+Esperado: `{"refreshed":1,"failed":0}`, el dashboard (Ajustes › Mercado Pago) muestra una nueva fecha
+de vigencia y el local sigue cobrando. Anotar si la respuesta traía `expires_in` (si no, el sistema
+asume 180 días, la vigencia documentada) y que el `refresh_token` cambió: una segunda ejecución
+tiene que seguir funcionando.
+
+### V13: notificaciones `mp-connect`
+
+Desde la cuenta del vendedor de prueba (Mercado Pago › Seguridad › aplicaciones conectadas), revocar
+el acceso de la aplicación. Esperado: llega una notificación `mp-connect` (línea `Webhook received:
+topic=mp-connect ...`), el log dice `mp-connect for seller <id>: disconnected`, el dashboard del local
+pasa a "Desconectada", la tienda deja de ofrecer Mercado Pago y llegan los emails de aviso (en
+desarrollo, en <http://localhost:3000/mailbox>). Anotar el cuerpo de la notificación (campos y
+`action`): hoy el sistema no depende de él (DEC-16).
+
+### V14: `expiration_date_from` en el pasado y clave de idempotencia
+
+Cada preferencia usa una clave de idempotencia y `expiration_date_from/to` alineados a una ventana
+de 5 minutos (DEC-19), así que `expiration_date_from` puede estar unos minutos en el pasado. Crear
+un pago en la tienda y comprobar que la preferencia se crea (si Mercado Pago respondiera error, el
+comprador vería "No pudimos completar la operación" y el log mostraría `Preference creation failed`).
+Repetir el botón "Pagar" dentro de los 5 minutos: no debe dar error.
+
+### V15: reembolso sin saldo
+
+Vaciar el saldo de la cuenta vendedora de prueba (o usar una cuenta sin saldo) y reembolsar un pedido
+desde el dashboard (Pedidos › pedido › Reembolsar). Esperado: el reembolso queda `Failed` con el
+motivo de Mercado Pago en su metadata (DEC-17). Anotar el texto exacto del mensaje y cómo se ve en
+el dashboard; si no se ve con claridad, hay que mostrarlo mejor.
+
+### V16: parámetros de la redirección y demora de `auto_return`
+
+Anotar qué parámetros trae realmente la URL de vuelta (`payment_id` o `collection_id`,
+`external_reference`, `status`, `merchant_order_id`) y cuánto tarda el regreso automático. La tienda
+de referencia no depende de ellos para confirmar nada (solo toma `payment_id`/`collection_id` y
+`external_reference` como punteros), así que alcanza con registrar los nombres.
+
+### V17: el `scope` del OAuth incluye `offline_access`
+
+Al vincular, el servidor rechaza una autorización sin `offline_access` (la conexión no se podría
+renovar). Si Mercado Pago no devuelve `scope` en la respuesta aunque el permiso esté otorgado, la
+vinculación se rechazará con "no incluyó acceso sin conexión": en ese caso poner
+`MP_REQUIRE_OFFLINE_ACCESS=false` y anotarlo (el diseño de renovación sigue necesitando el permiso).
+
+### V18: unidad de `ts` en `x-signature`
+
+La documentación dice milisegundos y su ejemplo y el SDK usan segundos (DEC-9). El sistema acepta
+las dos. Anotar con cuál llega en la práctica (`ts=` con 10 dígitos: segundos; 13: milisegundos).
+
+### Lista de control antes del primer cliente
+
+Pruebas de punta a punta con montos bajos en producción, con una cuenta real propia como local
+(PRD 12): pago aprobado, rechazado, pendiente (efectivo) que se aprueba después, reembolso total y
+parcial, desvinculación y nueva vinculación, y un pago con el webhook apagado (debe liquidarse con
+el respaldo de la pantalla de resultado).
+
+---
 
 ## Evidencia
 
@@ -24,19 +220,6 @@ Los detalles y los pasos de prueba se completan a medida que se implementa cada 
 - `npm view mercadopago version` devuelve 3.6.1. Con `require('mercadopago')` en Node 24.18 las exportaciones incluyen `WebhookSignatureValidator`, `InvalidWebhookSignatureError` y `SignatureFailureReason`.
 - El validador calcula HMAC-SHA256 en hexadecimal y compara en tiempo constante. Diferencias con la documentación, manejadas en `packages/vendure-plugin-mercadopago/src/lib/signature.ts` y fijadas con pruebas: no pasa `data.id` a minúsculas y trata `ts` como segundos (ver DEC-9).
 - Pruebas: `packages/vendure-plugin-mercadopago/src/lib/signature.spec.ts` firma las notificaciones con una implementación independiente del algoritmo documentado.
-
-### V10 (parcial)
-
-- Servidor con `strict: true`, `UuidIdStrategy` y PostgreSQL 17: arranca, migra y autentica al superadmin (ver DEC-8).
-- El SDK `mercadopago` 3.6.1 se carga desde CommonJS (`require`) sin problemas.
-- OAuth: el cliente del SDK no cubre PKCE ni `test_token`; se usa `fetch` (DEC-10).
-- Falta: compatibilidad del dashboard con los campos propios del plugin (T3/T4).
-
-### V8: el calculator por defecto de Vendure es tarifa fija exacta (resuelto, 2026-10-18)
-
-- Configuración usada por el alta de un local: `default-shipping-calculator` con `rate = <tarifa en centavos>`, `includesTax = include`, `taxRate = 0`.
-- Prueba: `apps/server/e2e/provisioning.e2e-spec.ts`, "the flat fee does not depend on the order (V8)". Con una tarifa de 123456 centavos, `eligibleShippingMethods` devuelve `price = 123456` y `priceWithTax = 123456` para carritos de 1, 3 y 7 unidades.
-- En `packages/vendure-plugin-mercadopago/e2e/checkout.e2e-spec.ts` el envío entra como línea de la preferencia y las líneas suman exactamente el total del pedido.
 
 ### V4: compra como invitado con un email que ya tiene cuenta (resuelto, 2026-10-18)
 
@@ -50,14 +233,28 @@ Los detalles y los pasos de prueba se completan a medida que se implementa cada 
 - Consecuencia para producto: ambos locales ven el mismo cliente (nombre y email); los pedidos siguen separados por canal. Cualquier dato guardado en el Customer (por ejemplo direcciones de una cuenta registrada) es visible para todos los locales donde el comprador interactuó. Hay que reflejarlo en la política de privacidad (PRD 6.3) y no guardar en el Customer datos que no deban compartirse.
 - Prueba: `packages/commerce-core/e2e/purchase.e2e-spec.ts`, "V5: the same email as guest in two stores is ONE Customer record".
 
-### V10: dashboard con los campos propios del plugin y `strict` (resuelto, 2026-10-18)
+### V8: el calculator por defecto de Vendure es tarifa fija exacta (resuelto, 2026-10-18)
 
-- El dashboard (React, Vendure 3.8) compila con la extensión del plugin, los campos propios del `Seller` y del `Channel`, y `UuidIdStrategy`.
-- Prueba: `apps/storefront-reference/e2e/dashboard.spec.ts` (Playwright, navegador real). El dueño de un local inicia sesión, `me { channels }` devuelve solo su canal, abre productos, pedidos, métodos de envío y la página "Mercado Pago" sin respuestas 4xx de la Admin API, y el botón de vinculación lleva a `auth.mercadopago.com/authorization` con `code_challenge_method=S256` y sin el `client_secret`.
-- Resumen de V10: servidor con `strict` y `UuidIdStrategy` (DEC-8), SDK `mercadopago` 3.6.1 desde CommonJS, OAuth por `fetch` porque el SDK no cubre PKCE (DEC-10), dashboard compatible (esta sección). Sin excepciones a `strict` en ningún paquete.
+- Configuración usada por el alta de un local: `default-shipping-calculator` con `rate = <tarifa en centavos>`, `includesTax = include`, `taxRate = 0`.
+- Prueba: `apps/server/e2e/provisioning.e2e-spec.ts`, "the flat fee does not depend on the order (V8)". Con una tarifa de 123456 centavos, `eligibleShippingMethods` devuelve `price = 123456` y `priceWithTax = 123456` para carritos de 1, 3 y 7 unidades.
+- En `packages/vendure-plugin-mercadopago/e2e/checkout.e2e-spec.ts` el envío entra como línea de la preferencia y las líneas suman exactamente el total del pedido.
 
 ### V9: `EmailPlugin` con remitente y plantilla por canal (resuelto, 2026-10-18)
 
 - Remitente por canal: sí, con `globalTemplateVars` como función (recibe el contexto con el canal) y los manejadores usando `{{ fromAddress }}` (local) o `{{ platformFromAddress }}` (plataforma). Plantilla por canal: sí, con un `TemplateLoader` propio que recibe el contexto (`ChannelTemplateLoader`). La documentación no lo decía; el comportamiento está probado.
 - Pruebas: `apps/server/e2e/emails.e2e-spec.ts`. Dos locales compran con el mismo servidor: los emails de pedido salen con `"Panadería Don Juan" <no-reply@plataforma.test>` y `"Librería Luna" <...>`; el local con carpeta propia usa su plantilla y el otro la de la plataforma; los emails de cuenta salen a nombre de la plataforma con el enlace de verificación a la tienda de origen (o a la plataforma si el local aún no tiene dominio).
 - Los avisos de atención (PRD 9.4 y 9.8) llegan a los administradores del canal y, en problemas de conexión, también al superadmin.
+
+### V10: servidor con `strict`, `UuidIdStrategy`, SDK 3.x y dashboard (resuelto, 2026-10-18)
+
+- Servidor con `strict: true`, `UuidIdStrategy` y PostgreSQL 17: arranca, migra y autentica al superadmin (DEC-8).
+- El SDK `mercadopago` 3.6.1 se carga desde CommonJS (`require`) sin problemas. El cliente `OAuth` del SDK no cubre PKCE ni `test_token`; se usa `fetch` (DEC-10).
+- El dashboard (React, Vendure 3.8) compila con la extensión del plugin, los campos propios del `Seller` y del `Channel`, y `UuidIdStrategy`.
+- Prueba: `apps/storefront-reference/e2e/dashboard.spec.ts` (Playwright, navegador real). El dueño de un local inicia sesión, `me { channels }` devuelve solo su canal, abre productos, pedidos, métodos de envío y la página "Mercado Pago" sin respuestas 4xx de la Admin API, y el botón de vinculación lleva a `auth.mercadopago.com/authorization` con `code_challenge_method=S256` y sin el `client_secret`.
+- Sin excepciones a `strict` en ningún paquete.
+
+### V11: el envío deja de ser elegible antes de pagar (resuelto, 2026-10-18)
+
+- El PRD 9.6 pedía verificar qué error devuelve la API. Resultado: **ninguno**. Vendure 3.8 reemplaza el método de envío que dejó de calificar por el primero que sí califica **en el momento en que cambia el pedido** (por ejemplo, al bajar la cantidad por debajo del mínimo del envío a domicilio queda "Retiro en el local", sin costo de envío), y el pase a `ArrangingPayment` funciona sin error.
+- Riesgo: con dos pestañas abiertas, el comprador podría pagar un total distinto del que revisó. Mitigación: `commerce-core` ofrece `startPayment(urls, { expectedTotal })`, que falla con `ORDER_CHANGED` y no crea nada si el pedido ya no suma lo que se mostró; la tienda de referencia lo usa y lo explica al comprador.
+- Pruebas: `apps/server/e2e/provisioning.e2e-spec.ts` ("is swapped for one that qualifies, with no error (V11)"), `packages/commerce-core/tests/checkout.test.ts` (`ORDER_CHANGED`) y `apps/storefront-reference/e2e/purchase.spec.ts` ("refuses to charge an order that changed after the buyer reviewed it").

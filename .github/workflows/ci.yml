@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, types, build and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # PostgreSQL suites (concurrency, unique indexes) run only when this is set.
+      TEST_DB_HOST: localhost
+      TEST_DB_USERNAME: postgres
+      TEST_DB_PASSWORD: ci-password
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint (ESLint and Prettier)
+        run: npm run lint
+
+      - name: Types
+        run: npm run typecheck
+
+      - name: Build (plugin, commerce-core, server, dashboard, storefront)
+        run: npm run build
+
+      - name: Tests (unit and integration, including PostgreSQL)
+        run: npm test
+
+      - name: Install the browser for the end-to-end tests
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end tests (storefront and dashboard in a real browser)
+        run: npm run test:e2e
+
+      - name: Keep the Playwright report when it fails
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-results
+          path: apps/storefront-reference/test-results
+          if-no-files-found: ignore
+
+  docker:
+    name: Images and compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compose file is valid
+        run: docker compose config --quiet
+        env:
+          COOKIE_SECRET: ci
+          DB_PASSWORD: ci
+          SUPERADMIN_PASSWORD: ci
+          S3_ACCESS_KEY: ci
+          S3_SECRET_KEY: ci
+
+      - name: Build the server image (server and worker)
+        run: docker build -f apps/server/Dockerfile -t tiendasaas-server .
+
+      - name: Build the storefront image
+        run: docker build -f apps/storefront-reference/Dockerfile -t tiendasaas-storefront .

@@ -50,6 +50,8 @@ x-app-environment: &app-environment
   MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE: ${MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE:-true}
   MP_OAUTH_TEST_TOKEN: ${MP_OAUTH_TEST_TOKEN:-false}
   MP_WEBHOOK_TOLERANCE_SECONDS: ${MP_WEBHOOK_TOLERANCE_SECONDS:-600}
+  MP_REQUIRE_OFFLINE_ACCESS: ${MP_REQUIRE_OFFLINE_ACCESS:-true}
+  MP_AUTH_URL: ${MP_AUTH_URL:-}
   MP_PREFERENCE_TTL_MINUTES: ${MP_PREFERENCE_TTL_MINUTES:-30}
   MP_PREFERENCE_ITEMS_MODE: ${MP_PREFERENCE_ITEMS_MODE:-lines}
   MP_DASHBOARD_URL: ${MP_DASHBOARD_URL:-}
@@ -185,6 +187,19 @@ services:
       <<: *app-environment
       DEMO_OWNER_PASSWORD: ${DEMO_OWNER_PASSWORD:-demo-password-123}
       DEMO_STOREFRONT_URL: ${DEMO_STOREFRONT_URL:-}
+    depends_on:
+      server:
+        condition: service_healthy
+
+  # Optional: renew the Mercado Pago connections now (the daily task does it for those that expire soon).
+  #   docker compose run --rm refresh-connections --all
+  refresh-connections:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    profiles: ['tools']
+    entrypoint: ['node', 'dist/scripts/refresh-connections.js']
+    environment: *app-environment
     depends_on:
       server:
         condition: service_healthy

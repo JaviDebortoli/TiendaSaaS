@@ -66,6 +66,7 @@ export default async function PayPage({
             </Link>
           </p>
           <form action={startPaymentAction} className="mt-8">
+            <input type="hidden" name="expectedTotal" value={cart.totalWithTax} />
             <PrimaryButton type="submit" disabled={!canPay} className="w-full py-3">
               Pagar con Mercado Pago
             </PrimaryButton>
