@@ -143,9 +143,20 @@ export function createPayment(transport: Transport) {
   };
 }
 
+/**
+ * The order, or `null` when this session cannot see it (unknown code, or somebody else's order):
+ * from the buyer's point of view that simply means "not confirmed".
+ */
 async function readOrder(transport: Transport, orderCode: string): Promise<Cart | null> {
-  const { orderByCode } = await transport.request(OrderByCodeQuery, { code: orderCode });
-  return orderByCode ?? null;
+  try {
+    const { orderByCode } = await transport.request(OrderByCodeQuery, { code: orderCode });
+    return orderByCode ?? null;
+  } catch (error) {
+    const extensions = (error as CommerceError).details?.extensions as
+      { code?: string } | undefined;
+    if (error instanceof CommerceError && extensions?.code === 'FORBIDDEN') return null;
+    throw error;
+  }
 }
 
 /** The server's verdict, or `undefined` when it could not give one (try again later). */

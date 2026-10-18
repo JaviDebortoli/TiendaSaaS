@@ -179,11 +179,8 @@ export class MercadoPagoCheckoutService {
       } catch {
         throw new CheckoutError('INVALID_BACK_URL', 'A return URL is not a valid URL.');
       }
-      if (
-        url.protocol !== 'https:' ||
-        LOCAL_HOST.test(url.hostname) ||
-        url.origin !== allowedOrigin
-      ) {
+      const insecure = url.protocol !== 'https:' || LOCAL_HOST.test(url.hostname);
+      if ((insecure && !this.options.allowInsecureReturnUrls) || url.origin !== allowedOrigin) {
         throw new CheckoutError(
           'INVALID_BACK_URL',
           'Return URLs must be https URLs on the store storefront domain.',

@@ -1,0 +1,29 @@
+{
+  "name": "@tiendasaas/storefront-reference",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Minimal Next.js storefront that exercises commerce-core end to end. Reference for custom storefronts, not a client design.",
+  "scripts": {
+    "dev": "next dev --port 3001",
+    "build": "next build",
+    "start": "next start --port 3001",
+    "typecheck": "next typegen && tsc -p tsconfig.json --noEmit",
+    "test": "echo \"Storefront tests run with npm run test:e2e (they boot a backend).\"",
+    "test:e2e": "playwright test",
+    "e2e:backend": "ts-node --project e2e/backend/tsconfig.json e2e/backend/start.ts"
+  },
+  "dependencies": {
+    "@tiendasaas/commerce-core": "*",
+    "next": "16.4.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tailwindcss": "^4.3.3"
+  }
+}

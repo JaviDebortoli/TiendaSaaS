@@ -46,6 +46,11 @@ export interface MercadoPagoPluginOptions {
   requireOfflineAccess?: boolean;
   /** Authorization host. Default `https://auth.mercadopago.com`. */
   authUrl?: string;
+  /**
+   * Accept `http` and local return URLs. **Tests and local demos only**: Mercado Pago itself
+   * rejects them, so a real payment cannot work with them. The origin check still applies.
+   */
+  allowInsecureReturnUrls?: boolean;
 }
 
 export type ResolvedMercadoPagoOptions = Required<MercadoPagoPluginOptions>;
@@ -61,6 +66,7 @@ export function resolveOptions(options: MercadoPagoPluginOptions): ResolvedMerca
     refreshWindowDays: 30,
     requireOfflineAccess: true,
     authUrl: 'https://auth.mercadopago.com',
+    allowInsecureReturnUrls: false,
     ...stripUndefined(options),
   };
 }

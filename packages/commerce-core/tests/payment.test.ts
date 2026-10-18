@@ -200,6 +200,30 @@ describe('waitForPayment (PRD 9.6 steps 4-6)', () => {
     expect(result).toMatchObject({ state: 'processing', orderCode: 'ORDER1' });
   });
 
+  it('treats an order this session may not read as not confirmed, instead of failing', async () => {
+    shop.on(
+      'OrderByCode',
+      () =>
+        new Response(
+          JSON.stringify({
+            errors: [
+              { message: 'You are not currently authorized', extensions: { code: 'FORBIDDEN' } },
+            ],
+            data: null,
+          }),
+          { headers: { 'content-type': 'application/json' } },
+        ),
+    );
+
+    const result = await payment.waitForPayment({
+      orderCode: 'SOMEONE',
+      timeoutMs: 3000,
+      ...fakeClock(),
+    });
+
+    expect(result).toMatchObject({ state: 'processing', order: null });
+  });
+
   it('stops waiting when aborted', async () => {
     orderStates('ArrangingPayment');
     const controller = new AbortController();

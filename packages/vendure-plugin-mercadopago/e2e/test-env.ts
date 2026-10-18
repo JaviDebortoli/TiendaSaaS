@@ -14,7 +14,6 @@ import { randomBytes } from 'node:crypto';
 import { MercadoPagoPlugin, MercadoPagoPluginOptions, manageMercadoPago } from '../src';
 import { initialData } from './fixtures/initial-data';
 
-registerInitializer('sqljs', new SqljsInitializer(path.join(__dirname, '__data__')));
 registerInitializer('postgres', new PostgresInitializer());
 
 /** PostgreSQL suites (concurrency, unique indexes) run only when a test database is configured. */
@@ -44,12 +43,25 @@ export const TEST_OPTIONS: MercadoPagoPluginOptions = {
   oauthTestToken: true,
 };
 
+/**
+ * SQL.js caches the populated database by the name of the file that calls `init()`, which is always
+ * this one. Suites with different plugins have different schemas, so each plugin set gets its own
+ * cache directory (a stale schema looks like "no such column" errors).
+ */
+function sqljsCacheDir(config: Partial<VendureConfig>): string {
+  const plugins = (config.plugins ?? []).map(
+    (plugin) => (plugin as { name?: string }).name ?? 'plugin',
+  );
+  return path.join(__dirname, '__data__', ['mp', ...plugins].join('_'));
+}
+
 export function createMpTestEnvironment(
   port: number,
   options: Partial<MercadoPagoPluginOptions> = {},
   config: Partial<VendureConfig> = {},
   db: 'sqljs' | 'postgres' = 'sqljs',
 ) {
+  registerInitializer('sqljs', new SqljsInitializer(sqljsCacheDir(config)));
   const env = createTestEnvironment(
     mergeConfig(
       {

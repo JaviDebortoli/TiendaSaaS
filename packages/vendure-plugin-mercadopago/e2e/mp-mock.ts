@@ -58,6 +58,10 @@ export class MercadoPagoMock {
   paymentLookupDelayMs = 0;
   /** Status the preference endpoint answers with; set to 500 to simulate an outage. */
   preferenceStatus = 201;
+  /** Preferences created so far, by id (the e2e checkout page needs the body to build the redirect). */
+  preferences = new Map<string, Record<string, unknown>>();
+  /** Base of the `init_point` the preference answers with. */
+  initPointBase = 'https://mp.test/checkout';
   private counter = 0;
 
   constructor() {
@@ -85,7 +89,7 @@ export class MercadoPagoMock {
           : HttpResponse.json({ message: 'invalid_token', status: 401 }, { status: 401 });
       }),
       http.post(`${API}/checkout/preferences`, async ({ request }) => {
-        await this.record(request);
+        const preferenceBody = await this.record(request);
         if (this.preferenceStatus !== 201) {
           return HttpResponse.json(
             { message: 'down', status: this.preferenceStatus },
@@ -93,10 +97,11 @@ export class MercadoPagoMock {
           );
         }
         const id = `pref-${++this.counter}`;
+        this.preferences.set(id, preferenceBody ?? {});
         return HttpResponse.json(
           {
             id,
-            init_point: `https://mp.test/checkout/${id}`,
+            init_point: `${this.initPointBase}/${id}`,
             sandbox_init_point: `https://sandbox.mp.test/checkout/${id}`,
           },
           { status: 201 },

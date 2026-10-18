@@ -23,6 +23,7 @@ const { server, adminClient, shopClient, port, init } = createMpTestEnvironment(
   webhookMode: 'preference',
   requireSignatureInPreferenceMode: false,
   preferenceItemsMode: 'total',
+  allowInsecureReturnUrls: true,
 });
 const mp = new MercadoPagoMock();
 
@@ -173,5 +174,62 @@ describe('webhookMode "preference"', () => {
 
     expect(unsigned.status).toBe(401);
     expect(signed.status).toBe(200);
+  });
+});
+
+describe('allowInsecureReturnUrls (tests and local demos only)', () => {
+  const LOCAL = 'http://localhost:3301';
+  let localStore: TestStore;
+  let localPayable: PayableStore;
+
+  beforeAll(async () => {
+    localStore = await createStore(adminClient, 'pm-local', { storefrontUrl: LOCAL });
+    localPayable = await provisionStore(adminClient, localStore);
+    await connections.link(localStore.channelId, {
+      ...grant,
+      access_token: 'APP_USR-pref-local',
+      refresh_token: 'TG-pref-local',
+      user_id: 9102,
+    });
+  }, 60_000);
+
+  const create = (orderCode: string, successUrl: string) =>
+    shopClient
+      .query(
+        gql`
+          mutation ($input: MercadoPagoCheckoutInput!) {
+            createMercadoPagoCheckout(input: $input) {
+              __typename
+              ... on MercadoPagoError {
+                reason
+              }
+            }
+          }
+        `,
+        {
+          input: {
+            orderCode,
+            successUrl,
+            failureUrl: `${LOCAL}/result`,
+            pendingUrl: `${LOCAL}/result`,
+          },
+        },
+      )
+      .then((r) => r.createMercadoPagoCheckout);
+
+  it('accepts local http return URLs on the store origin', async () => {
+    const order = await checkoutAsGuest(shopClient, localStore, localPayable);
+
+    expect(await create(order.code, `${LOCAL}/checkout/result`)).toEqual({
+      __typename: 'MercadoPagoCheckout',
+    });
+  });
+
+  it('still refuses any other origin', async () => {
+    const order = await checkoutAsGuest(shopClient, localStore, localPayable);
+
+    expect(await create(order.code, 'https://evil.example.test/result')).toMatchObject({
+      reason: 'INVALID_BACK_URL',
+    });
   });
 });
