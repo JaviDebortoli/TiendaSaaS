@@ -12,6 +12,7 @@ coverage/
 apps/server/static/
 apps/server/dev-mailbox/
 apps/server/vendure.sqlite
+apps/server/src/gql/
 # Playwright
 test-results/
 playwright-report/
@@ -20,3 +21,6 @@ playwright-report/
 Thumbs.db
 .idea/
 .vscode/
+
+# Vendure CLI local state
+.vendure/

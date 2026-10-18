@@ -1,0 +1,33 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "node16",
+    "moduleResolution": "node16",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "useDefineForClassFields": false,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "baseUrl": "./",
+    "sourceMap": false,
+    "declaration": false
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/plugins/**/dashboard/*",
+    "src/gql/*",
+    "vite.*.*ts",
+    "src/**/*.spec.ts",
+    "e2e"
+  ],
+  "ts-node": {
+    "files": true
+  },
+  "references": [
+    {
+      "path": "./tsconfig.dashboard.json"
+    }
+  ]
+}

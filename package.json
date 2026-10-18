@@ -28,5 +28,12 @@
     "prettier": "^3.9.10",
     "typescript": "5.8.3",
     "typescript-eslint": "^8.71.2"
+  },
+  "allowScripts": {
+    "bcrypt@6.0.0": true,
+    "re2@1.23.3": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true,
+    "@apollo/protobufjs@1.2.8": true
   }
 }
