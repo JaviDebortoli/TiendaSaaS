@@ -184,7 +184,17 @@ export class MercadoPagoConnectionService {
         const links = manager.getRepository(MercadoPagoChannelLink);
         const now = new Date();
 
-        let account = await accounts.findOneBy({ mpUserId });
+        // The account row is locked first (PostgreSQL), like `releaseLink` does: a release that runs
+        // meanwhile either finishes before this reads the account, or waits and then sees this
+        // link. Without it the release could wipe the tokens after this decided what to write, and
+        // the update, computed against the state before the wipe, would leave new tokens on an
+        // account marked `released`.
+        let account = await accounts.findOne({
+          where: { mpUserId },
+          ...(manager.connection.options.type === 'postgres'
+            ? { lock: { mode: 'pessimistic_write' as const } }
+            : {}),
+        });
         if (account) {
           const holder = await links.findOneBy({ accountId: account.id, status: 'active' });
           if (holder && String(holder.channelId) !== String(channelId)) {
