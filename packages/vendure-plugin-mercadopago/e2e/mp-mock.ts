@@ -85,6 +85,11 @@ export class MercadoPagoMock {
   singleUseRefreshTokens = false;
   /** Artificial latency of the token endpoint, to make two renewals overlap. */
   oauthDelayMs = 0;
+  /**
+   * When set, the token endpoint receives the request, records it and then waits for this promise
+   * before answering: a test holds a renewal in flight and decides when it ends, with no timers.
+   */
+  oauthGate: Promise<void> | undefined = undefined;
   payments = new Map<number, MockPayment>();
   /** merchant order id -> the payment it belongs to. */
   merchantOrders = new Map<number, MockPayment>();
@@ -126,6 +131,7 @@ export class MercadoPagoMock {
       http.post(`${API}/oauth/token`, async ({ request }) => {
         const body = await this.record(request);
         if (this.oauthDelayMs) await new Promise((r) => setTimeout(r, this.oauthDelayMs));
+        if (this.oauthGate) await this.oauthGate;
         if (this.oauthStatus !== undefined) {
           return HttpResponse.json(
             { error: 'invalid_client', message: 'Invalid client', status: this.oauthStatus },
@@ -259,6 +265,7 @@ export class MercadoPagoMock {
     this.oauthStatus = undefined;
     this.singleUseRefreshTokens = false;
     this.oauthDelayMs = 0;
+    this.oauthGate = undefined;
     this.payments.clear();
     this.merchantOrders.clear();
     this.merchantOrderStatus = 200;

@@ -19,6 +19,7 @@ import {
   referenceFields,
   STOREFRONT_URL,
   useIssuer,
+  waitFor,
 } from './shop-helpers';
 import { createMpTestEnvironment, createStore, TestStore } from './test-env';
 
@@ -262,12 +263,18 @@ describe('a 401 from Mercado Pago is a suspected revocation (PRD 9.4)', () => {
     const grant = await relink(grants());
     const reauthorized = grants();
     mp.rejectedTokens.set(grant.access_token, 401); // the renewal below is refused: no refresh grant
-    mp.oauthDelayMs = 300;
+    // The renewal is held in flight until the store has authorized the account again: no timers.
+    let finishRenewal!: () => void;
+    mp.oauthGate = new Promise<void>((resolve) => (finishRenewal = resolve));
     const { id } = (await connections.findAccountByMpUserId(String(SELLER)))!;
 
     const verdict = connections.verifyAccess(id, grant.access_token);
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitFor(
+      async () => mp.requestsTo('POST', '/oauth/token').length,
+      (renewals) => renewals === 1,
+    );
     await connections.link(store.channelId, reauthorized); // new tokens, written under no lock
+    finishRenewal();
 
     expect((await verdict).kind).toBe('replaced');
     expect(await accountStatus()).toBe('connected');
