@@ -158,10 +158,17 @@ export class MercadoPagoConnectionService {
    * - the store sells with another account: that link is retired and this one becomes active;
    * - the store had this account before: that link is reactivated, no new one is created.
    */
-  async link(
+  link(
     channelId: ID,
     tokens: OAuthTokenResponse,
-    attempt = 1,
+  ): Promise<{ account: MercadoPagoAccount; link: MercadoPagoChannelLink }> {
+    return this.linkOnce(channelId, tokens, 1);
+  }
+
+  private async linkOnce(
+    channelId: ID,
+    tokens: OAuthTokenResponse,
+    attempt: number,
   ): Promise<{ account: MercadoPagoAccount; link: MercadoPagoChannelLink }> {
     if (tokens.user_id === undefined || tokens.user_id === null || tokens.user_id === '') {
       throw new MercadoPagoApiError(
@@ -212,7 +219,7 @@ export class MercadoPagoConnectionService {
       if (!isUniqueViolation(error)) throw error;
       // Two requests of the same store linking at once: the loser finds the other's link and
       // retires or reuses it. Any other unique violation means the account belongs to another store.
-      if (attempt === 1 && isStoreRace(error)) return this.link(channelId, tokens, attempt + 1);
+      if (attempt === 1 && isStoreRace(error)) return this.linkOnce(channelId, tokens, attempt + 1);
       throw new AccountAlreadyLinkedError();
     }
   }

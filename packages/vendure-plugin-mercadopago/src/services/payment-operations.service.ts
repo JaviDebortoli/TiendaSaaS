@@ -102,6 +102,10 @@ export class MercadoPagoPaymentOperations {
   ): Promise<VerifyResult> {
     let found: FoundPayment | null;
     try {
+      // Unlike the other lookups, this one also tries accounts of `released` links: by the time it
+      // runs the payment is already known to be approved (the webhook or the sync mutation checked
+      // it), and a payment of a released link that still has tokens is honoured and reported
+      // rather than lost (PRD 9.7).
       const candidates = await this.connections.accountsForChannel(ctx.channelId, [
         'active',
         'retired',
