@@ -34,12 +34,12 @@ Branch: feat/mp-preference-registry (stacked on feat/mp-account-links, PR #1 sti
 
 ## Tasks
 
-- [ ] T1 (A1-A6) Confirmed revocation retires the account's active links; attention text; tests; DEC-42/PRD/README · inline · —
-- [ ] T2 (B2, B3, B6 partly) Registry entity + migration + service; checkout issues the preference with `<code>-<id>` and puts the registry token in the preference-mode `notification_url`; mock and test helpers · inline · —
-- [ ] T3 (B1, B4, B5, B6, B8) Validation in processor, handler/`verifyApproved`, `cancelPending`; merchant order lookup; new review reasons and attention texts; preference-mode route reads the ref · inline · —
-- [ ] T4 (B7) `syncMercadoPagoPayment(paymentId, externalReference)`; commerce-core `waitForPayment`; storefront result page and status route; Shop schema snapshot and codegen · inline · —
-- [ ] T5 (A5, B9) Adapt every existing test to the new format; add the new tests · inline · —
-- [ ] T6 (A6, B10, B11) Docs: DECISIONS, PRD, README, VERIFICATION · inline · —
+- [x] T1 (A1-A6) Confirmed revocation retires the account's active links; attention text; tests; DEC-42/PRD/README · inline · 733a9b0
+- [x] T2 (B2, B3, B6 partly) Registry entity + migration + service; checkout issues the preference with `<code>-<id>` and puts the registry token in the preference-mode `notification_url`; mock and test helpers · inline · 2fa9017
+- [x] T3 (B1, B4, B5, B6, B8) Validation in processor, handler/`verifyApproved`, `cancelPending`; merchant order lookup; new review reasons and attention texts; preference-mode route reads the ref · inline · 98151a7, 1e53d2c
+- [x] T4 (B7) `syncMercadoPagoPayment(paymentId, externalReference)`; commerce-core `waitForPayment`; storefront result page and status route; Shop schema snapshot and codegen · inline · 13b6d86
+- [x] T5 (A5, B9) Adapt every existing test to the new format; add the new tests · inline · 98151a7, 1e53d2c, 13b6d86
+- [x] T6 (A6, B10, B11) Docs: DECISIONS, PRD, README, VERIFICATION · inline · docs commit (this one)
 - [ ] T7 (S1) `npm run verify` with PostgreSQL, independent verifier, native review where due · inline · —
 
 ## Log
@@ -48,3 +48,4 @@ Branch: feat/mp-preference-registry (stacked on feat/mp-account-links, PR #1 sti
 - L2 (analysis, docs): the SDK 3.6.1 types carry `payment.order` and `merchantOrder.preference_id`, and the merchant order reference documents `preference_id`; nothing contradicts the design. Whether Mercado Pago always returns the order of a payment (cash payments included) and accepts the new `external_reference` is B10 (sandbox).
 - L3 (design, preference mode): the notification of a preference carries no payment data, and reading a payment needs a token. To avoid probing candidate accounts (B6), the registry token goes in the preference's `notification_url` (`...?ref=<token>`) and the route resolves the account from it; if `ref` is missing the notification's `user_id` is used, and with neither it is ignored and logged. Whether Mercado Pago keeps that query string is added to the sandbox points.
 - L4 (design, identifier): the identifier is random (16 bytes, base64url) and stored with the idempotency key of the preference request, so repeating "Pagar" inside the 5-minute window reuses the same identifier and Mercado Pago's idempotency still returns the same preference (DEC-19 intact).
+- L5 (2026-10-19) T1-T6 done and `npm run verify` green before the docs (plugin 284, commerce-core 75, server 48, Playwright 24). Docs: DEC-42 updated, DEC-51 rewritten, DEC-52 and DEC-53 added, PRD v1.4, V21-V23, README. Next: final verify with PostgreSQL, independent verifier, native review where due.

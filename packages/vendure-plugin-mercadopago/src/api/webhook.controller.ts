@@ -117,7 +117,7 @@ export class MercadoPagoWebhookController {
 
     // One line per accepted notification: it is the evidence needed to settle V1, V2 and V13.
     Logger.info(
-      `Webhook received: topic=${topic ?? '-'} id=${dataId ?? '-'} user_id=${mpUserId ?? '-'} signed=${xSignature ? 'yes' : 'no'} route=${channelId === undefined ? 'application' : 'channel'}`,
+      `Webhook received: topic=${topic ?? '-'} id=${dataId ?? '-'} user_id=${mpUserId ?? '-'} signed=${xSignature ? 'yes' : 'no'} route=${channelId === undefined ? 'application' : 'channel'} ref=${ref ? 'yes' : 'no'}`,
       loggerCtx,
     );
     if (topic === 'payment') {
