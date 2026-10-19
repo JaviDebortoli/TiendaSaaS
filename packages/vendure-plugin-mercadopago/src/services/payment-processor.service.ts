@@ -20,6 +20,7 @@ import { MercadoPagoChannelLink } from '../entities/mercadopago-channel-link.ent
 import { MercadoPagoPreference } from '../entities/mercadopago-preference.entity';
 import { ClaimStatus, MercadoPagoPaymentClaim } from '../entities/mercadopago-payment-claim.entity';
 import { MercadoPagoAttentionEvent } from '../events';
+import { checkCollector } from '../lib/collector';
 import { isUniqueViolation } from '../lib/db';
 import { runAsSettlement } from '../settlement-scope';
 import { validatePaymentAgainstOrder } from '../lib/payment-validation';
@@ -192,6 +193,14 @@ export class MercadoPagoPaymentProcessor {
     if (outcome !== 'settle') {
       // Only settling needs the payment to prove where it comes from (settle() below). A pending,
       // rejected or reversed payment is recorded as always, so a chargeback alert is never lost.
+      // A collector that is not the account is logged: it is the evidence V19 relies on.
+      const collector = checkCollector(payment, account.mpUserId);
+      if (!collector.ok) {
+        Logger.warn(
+          `Payment ${input.mpPaymentId} (${payment.status ?? 'unknown'}): ${collector.reason} (read with account ${account.mpUserId}, collector_id ${payment.collector_id ?? 'absent'}).`,
+          loggerCtx,
+        );
+      }
       await this.record(ctx, order, payment, outcome);
       return { outcome, orderCode: order.code, orderState: order.state };
     }

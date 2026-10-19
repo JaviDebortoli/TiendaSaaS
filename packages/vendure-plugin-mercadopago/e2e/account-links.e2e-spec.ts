@@ -1,6 +1,6 @@
-import { EventBus, TransactionalConnection } from '@vendure/core';
+import { EventBus, Logger, TransactionalConnection } from '@vendure/core';
 import gql from 'graphql-tag';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MercadoPagoAccount,
   MercadoPagoAttentionEvent,
@@ -539,9 +539,15 @@ describe('the collector must be the account the payment was read with (PRD 9.7)'
         await connections.link(storeA.channelId, gx);
         const order = await checkoutAsGuest(shopClient, storeA, payableA);
         const payment = pay(order, gx, { ...overrides(), status: 'pending' });
+        const warn = vi.spyOn(Logger, 'warn');
 
         expect(await notify(payment, X)).toMatchObject({ outcome: 'pending' });
 
+        // The collector that was observed stays in the log: it is the evidence V19 relies on.
+        expect(warn.mock.calls.map(([message]) => message)).toContainEqual(
+          expect.stringContaining(`${reason} (read with account ${X}, collector_id`),
+        );
+        warn.mockRestore();
         expect(await stateOf(storeA, order.code)).toBe('ArrangingPayment');
         expect((await claims().findOneByOrFail({ mpPaymentId: String(payment.id) })).status).toBe(
           'recorded',

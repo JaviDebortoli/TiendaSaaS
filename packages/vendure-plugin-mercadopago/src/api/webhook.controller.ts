@@ -113,7 +113,7 @@ export class MercadoPagoWebhookController {
     const dataId = queryDataId ?? body?.data?.id ?? (requireSignature ? undefined : query.id);
     const mpUserId = body?.user_id !== undefined ? String(body.user_id) : undefined;
     // Only the per-preference route (`notification_url`) carries the registry identifier.
-    const ref = query.ref;
+    const ref = typeof query.ref === 'string' ? query.ref : undefined;
 
     // One line per accepted notification: it is the evidence needed to settle V1, V2 and V13.
     Logger.info(
