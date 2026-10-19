@@ -9,7 +9,7 @@
   <mj-body background-color="#ffffff">
     <mj-section padding="24px 16px">
       <mj-column>
-        <mj-text font-size="12px" color="#666666">{{ storeName }}</mj-text>
+        <mj-text font-size="12px" color="#666666">{{#if platformOnly}}{{ platformName }}{{else}}{{ storeName }}{{/if}}</mj-text>
         <mj-text font-size="20px" font-weight="bold">{{ title }}</mj-text>
         <mj-text>{{ message }}</mj-text>
         {{#if orderCode}}
