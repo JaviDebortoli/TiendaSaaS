@@ -44,11 +44,12 @@ jobs:
       - name: Lint (ESLint and Prettier)
         run: npm run lint
 
-      - name: Types
-        run: npm run typecheck
-
+      # Build first: workspaces import each other through their built `dist/`, which is gitignored.
       - name: Build (plugin, commerce-core, server, dashboard, storefront)
         run: npm run build
+
+      - name: Types
+        run: npm run typecheck
 
       - name: Tests (unit and integration, including PostgreSQL)
         run: npm test
