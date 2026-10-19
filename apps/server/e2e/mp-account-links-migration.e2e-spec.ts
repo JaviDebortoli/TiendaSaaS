@@ -10,6 +10,7 @@ import { Init1792351675476 } from '../src/migrations/1792351675476-init';
 import { Mercadopago1792354373861 } from '../src/migrations/1792354373861-mercadopago';
 import { Platform1792354900631 } from '../src/migrations/1792354900631-platform';
 import { MpAccountLinks1792373803784 } from '../src/migrations/1792373803784-mp-account-links';
+import { MpPreferenceRegistry1792379793083 } from '../src/migrations/1792379793083-mp-preference-registry';
 
 /**
  * Runs the migration that splits `mercado_pago_connection` into accounts and links on a
@@ -62,6 +63,19 @@ suite('migration: accounts and channel links (PRD 9.3)', () => {
     await legacy.runMigrations();
     return { name, legacy };
   }
+
+  /** The database after the account migration and the preference registry migration. */
+  const upgradeWithRegistry = (name: string) =>
+    new DataSource({
+      ...connectionOptions(name),
+      migrations: [
+        Init1792351675476,
+        Mercadopago1792354373861,
+        Platform1792354900631,
+        MpAccountLinks1792373803784,
+        MpPreferenceRegistry1792379793083,
+      ],
+    }).initialize();
 
   const upgradeSource = (name: string) =>
     new DataSource({
@@ -326,6 +340,77 @@ suite('migration: accounts and channel links (PRD 9.3)', () => {
       expect(rows[2]).toMatchObject({ status: 'disconnected', accessToken: '' });
       await expect(db.query('SELECT 1 FROM mercado_pago_account')).rejects.toThrow();
       await expect(db.query('SELECT 1 FROM mercado_pago_channel_link')).rejects.toThrow();
+    } finally {
+      await db.destroy();
+    }
+  });
+  it('adds the registry of issued preferences, with every identifier unique, and can be reverted', async () => {
+    process.env.MP_TOKEN_ENCRYPTION_KEY = KEY;
+    const { name, legacy } = await previousVersion();
+    await legacy.destroy();
+
+    const db = await upgradeWithRegistry(name);
+    try {
+      await db.runMigrations();
+      const account = await insert(
+        db,
+        `INSERT INTO mercado_pago_account ("mpUserId", "accessToken", "refreshToken", "expiresAt", "status")
+         VALUES ('1111', 'a', 'r', now(), 'connected')`,
+      );
+      const link = await insert(
+        db,
+        `INSERT INTO mercado_pago_channel_link ("channelId", "accountId", "status", "linkedAt")
+         VALUES ('channel-1', $1, 'active', now())`,
+        [account],
+      );
+      const preference = (
+        token: string,
+        reference: string,
+        key: string,
+        preferenceId: string | null,
+      ) =>
+        db.query(
+          `INSERT INTO mercado_pago_preference ("token", "externalReference", "idempotencyKey", "orderId", "orderCode", "channelId", "accountId", "linkId", "totalWithTax", "preferenceId")
+           VALUES ($1, $2, $3, 'order-1', 'ORDER1', 'channel-1', $4, $5, 1000, $6)`,
+          [token, reference, key, account, link, preferenceId],
+        );
+
+      await preference('t1', 'ORDER1-t1', 'k1', 'pref-1');
+      // Two preferences still waiting for Mercado Pago's answer are fine...
+      await preference('t2', 'ORDER1-t2', 'k2', null);
+      await preference('t3', 'ORDER1-t3', 'k3', null);
+      // ...but no identifier can repeat.
+      await expect(preference('t1', 'ORDER1-x', 'kx', 'prefx')).rejects.toThrow(
+        /IDX_1de14b1aa6d084981ea6c0582b/,
+      );
+      await expect(preference('tx', 'ORDER1-t1', 'kx', 'prefx')).rejects.toThrow(
+        /IDX_9f5c3dbecfdb09100b529afcd7/,
+      );
+      await expect(preference('tx', 'ORDER1-x', 'k1', 'prefx')).rejects.toThrow(
+        /IDX_e1e97f09a85420a3f5e51ab24e/,
+      );
+      await expect(preference('tx', 'ORDER1-x', 'kx', 'pref-1')).rejects.toThrow(
+        /IDX_8d4fc6922328bea0688b7af271/,
+      );
+      // A preference cannot point at an account or a link that does not exist.
+      await expect(
+        db.query(
+          `INSERT INTO mercado_pago_preference ("token", "externalReference", "idempotencyKey", "orderId", "orderCode", "channelId", "accountId", "linkId", "totalWithTax")
+           VALUES ('ty', 'ORDER1-ty', 'ky', 'order-1', 'ORDER1', 'channel-1', uuid_generate_v4(), $1, 1000)`,
+          [link],
+        ),
+      ).rejects.toThrow(/foreign key/i);
+
+      await db.undoLastMigration();
+
+      await expect(db.query('SELECT 1 FROM mercado_pago_preference')).rejects.toThrow();
+      // The accounts and links of the previous migration are untouched.
+      expect(await db.query('SELECT count(*)::int AS n FROM mercado_pago_account')).toEqual([
+        { n: 1 },
+      ]);
+      expect(await db.query('SELECT count(*)::int AS n FROM mercado_pago_channel_link')).toEqual([
+        { n: 1 },
+      ]);
     } finally {
       await db.destroy();
     }
