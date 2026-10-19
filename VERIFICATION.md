@@ -19,23 +19,24 @@ prueban con los pasos de "Pruebas de sandbox".
 
 Puntos que aparecieron al implementar (no estaban en el PRD):
 
-| #   | Punto                                                                            | Estado                  | Quién lo resuelve             |
-| --- | -------------------------------------------------------------------------------- | ----------------------- | ----------------------------- |
-| V11 | Qué pasa si el envío deja de ser elegible al pasar a pago (PRD 9.6 paso 1)       | **Resuelto**            | Implementación                |
-| V12 | Respuesta de la renovación del token (campos, rotación, `expires_in`)            | **Pendiente** (ver V12) | Responsable, con credenciales |
-| V13 | Cuerpo y llegada de las notificaciones `mp-connect`                              | **Pendiente** (ver V13) | Responsable, con credenciales |
-| V14 | `expiration_date_from` en el pasado y clave de idempotencia de la preferencia    | **Pendiente** (ver V14) | Responsable, con credenciales |
-| V15 | Mensaje de Mercado Pago al reembolsar sin saldo                                  | **Pendiente** (ver V15) | Responsable, con credenciales |
-| V16 | Parámetros de la redirección de vuelta y demora de `auto_return`                 | **Pendiente** (ver V16) | Responsable, con credenciales |
-| V17 | El `scope` que devuelve el OAuth incluye `offline_access`                        | **Pendiente** (ver V17) | Responsable, con credenciales |
-| V18 | Unidad de `ts` en `x-signature` (segundos o milisegundos)                        | **Pendiente** (ver V18) | Responsable, con credenciales |
-| V19 | `collector_id` del pago = `user_id` del OAuth = `user_id` de la notificación     | **Pendiente** (ver V19) | Responsable, con credenciales |
-| V20 | Si una autorización OAuth nueva de la misma cuenta anula los tokens anteriores   | **Pendiente** (ver V20) | Responsable, con credenciales |
-| V21 | Formato y largo de `external_reference` que Mercado Pago acepta y devuelve igual | **Pendiente** (ver V21) | Responsable, con credenciales |
-| V22 | Cómo se obtiene el `preference_id` de un pago (también en efectivo)              | **Pendiente** (ver V22) | Responsable, con credenciales |
-| V23 | Mercado Pago conserva `?ref=` de la `notification_url` (modo `preference`)       | **Pendiente** (ver V23) | Responsable, con credenciales |
+| #   | Punto                                                                                                 | Estado                  | Quién lo resuelve             |
+| --- | ----------------------------------------------------------------------------------------------------- | ----------------------- | ----------------------------- |
+| V11 | Qué pasa si el envío deja de ser elegible al pasar a pago (PRD 9.6 paso 1)                            | **Resuelto**            | Implementación                |
+| V12 | Respuesta de la renovación del token (campos, rotación, `expires_in`)                                 | **Pendiente** (ver V12) | Responsable, con credenciales |
+| V13 | Cuerpo y llegada de las notificaciones `mp-connect`                                                   | **Pendiente** (ver V13) | Responsable, con credenciales |
+| V14 | `expiration_date_from` en el pasado y clave de idempotencia de la preferencia                         | **Pendiente** (ver V14) | Responsable, con credenciales |
+| V15 | Mensaje de Mercado Pago al reembolsar sin saldo                                                       | **Pendiente** (ver V15) | Responsable, con credenciales |
+| V16 | Parámetros de la redirección de vuelta y demora de `auto_return`                                      | **Pendiente** (ver V16) | Responsable, con credenciales |
+| V17 | El `scope` que devuelve el OAuth incluye `offline_access`                                             | **Pendiente** (ver V17) | Responsable, con credenciales |
+| V18 | Unidad de `ts` en `x-signature` (segundos o milisegundos)                                             | **Pendiente** (ver V18) | Responsable, con credenciales |
+| V19 | `collector_id` del pago = `user_id` del OAuth = `user_id` de la notificación                          | **Pendiente** (ver V19) | Responsable, con credenciales |
+| V20 | Si una autorización OAuth nueva de la misma cuenta anula los tokens anteriores                        | **Pendiente** (ver V20) | Responsable, con credenciales |
+| V21 | Formato y largo de `external_reference` que Mercado Pago acepta y devuelve igual                      | **Pendiente** (ver V21) | Responsable, con credenciales |
+| V22 | Cómo se obtiene el `preference_id` de un pago (también en efectivo)                                   | **Pendiente** (ver V22) | Responsable, con credenciales |
+| V23 | Mercado Pago conserva `?ref=` de la `notification_url` (modo `preference`)                            | **Pendiente** (ver V23) | Responsable, con credenciales |
+| V24 | Qué devuelve Mercado Pago con un token revocado (código HTTP y cuerpo), al usar el token y al renovar | **Pendiente** (ver V24) | Responsable, con credenciales |
 
-**V19 se corre primero, y después V21 y V22**: el rechazo de los pagos cuyo `collector_id` no coincide con la cuenta consultada
+**V19 se corre primero, y después V21 y V22** (V24 junto con V20): el rechazo de los pagos cuyo `collector_id` no coincide con la cuenta consultada
 (PRD 9.5) depende de que los tres identificadores sean el mismo número. Si no coinciden, no sigas: la
 regla hay que rediseñarla (avisá antes de tocarla). V21 y V22 son de la misma clase: el pago solo se
 liquida si pertenece a una preferencia que emitió la plataforma (PRD 9.5), y eso depende de cómo
@@ -152,6 +153,33 @@ token en la terminal.
    - `200`: la autorización nueva **no** anula la anterior.
    - `401`: la anula.
 4. Anotar el resultado. En los dos casos la plataforma sigue funcionando: usa B.
+
+### V24: qué devuelve Mercado Pago con un token revocado
+
+La plataforma trata un **401** del token de acceso como una revocación sospechada y solo la confirma si
+la renovación es rechazada (PRD 9.4, DEC-55). Hay que saber qué responde Mercado Pago de verdad. Se
+corre junto con V20: mismas cuentas de prueba, mismos pasos de credenciales.
+
+1. Con un vendedor de prueba vinculado, tomar de la base su `accessToken` y su `refreshToken` sin cifrar
+   (V20, paso 1, explica cómo) y guardarlos aparte.
+2. Revocar el acceso de la aplicación desde la cuenta de prueba (Mercado Pago › Tu perfil › Seguridad ›
+   Aplicaciones conectadas), o desde otro entorno autorizando de nuevo la misma cuenta (V20).
+3. Con el token de acceso revocado, anotar el **código HTTP y el cuerpo** de cada llamada:
+
+   ```
+   curl -i -H "Authorization: Bearer <access_token>" https://api.mercadopago.com/users/me
+   curl -i -H "Authorization: Bearer <access_token>" https://api.mercadopago.com/v1/payments/<id>
+   curl -i -H "Authorization: Bearer <access_token>" https://api.mercadopago.com/merchant_orders/<id>
+   ```
+
+4. Con el `refresh_token` revocado, anotar el código y el cuerpo de la renovación (`POST /oauth/token`,
+   `grant_type=refresh_token`, con `client_id` y `client_secret` de la aplicación). Repetir con un
+   `refresh_token` **ya usado** (el que se acaba de rotar): es el caso de dos procesos que renuevan a la vez.
+5. Esperado: **401** con un cuerpo que dice que el token es inválido en las tres llamadas, e
+   `invalid_grant` (400) en la renovación. La plataforma lo reconoce así: 401 en el token de acceso y
+   `invalid_grant` o un rechazo de autenticación en la renovación; un 403 o un 404 no cuentan.
+6. **Si algo es distinto** (por ejemplo, un 403 o un 400 con otro cuerpo para un token revocado), no cambies
+   la regla: avisame con los códigos y los cuerpos, y decidimos qué respuestas cuentan.
 
 ### V21: Mercado Pago acepta y devuelve igual el `external_reference`
 

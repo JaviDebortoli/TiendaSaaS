@@ -38,6 +38,7 @@ un archivo del repositorio.
 - [ ] `MP_TOKEN_ENCRYPTION_KEY` generada con `openssl rand -base64 32` y guardada en un gestor de secretos: **si se pierde, hay que volver a vincular todos los locales**.
 - [ ] `SUPERADMIN_PASSWORD` y `COOKIE_SECRET` únicos de este entorno.
 - [ ] `APP_ENV=prod`: apaga GraphiQL, el buzón de emails de desarrollo y el modo permisivo de `HardenPlugin` (introspección desactivada).
+- [ ] La aplicación de Mercado Pago de producción **no se usa en desarrollo ni en pruebas**: cada entorno tiene la suya. Una autorización hecha desde otro entorno puede anular los tokens de producción (V20 en `VERIFICATION.md`) y dejar a un local desvinculado.
 - [ ] `MP_ALLOW_INSECURE_RETURN_URLS` sin definir o `false`.
 - [ ] La tienda sin `INSECURE_COOKIES` (las cookies de sesión van `Secure`).
 - [ ] Copias de seguridad de PostgreSQL probadas con una restauración.

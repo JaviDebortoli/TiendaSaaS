@@ -47,9 +47,9 @@ Assumptions (not in the request): the verification pause is kept in memory per p
 
 ## Tasks
 
-- [ ] T1 (S1-S5) Account lock, re-read inside it, one verification path (`reconcileAfterConnectNotification` and the 401 path share it), `markDisconnected` through the lock; PostgreSQL tests; DEC-49/DEC-51 · inline · -
-- [ ] T2 (S6-S14) 401 as suspected revocation across checkout, payment reads, merchant order, refund, cancel; pause option and env; tests · inline · -
-- [ ] T3 (S18-S20) `createPayment` only inside the settlement scope, bound to order and `mpPaymentId`; tests · inline · -
+- [x] T1 (S1-S5) Account lock, re-read inside it, one verification path (`reconcileAfterConnectNotification` and the 401 path share it), `markDisconnected` through the lock; PostgreSQL tests; DEC-49/DEC-51 · inline · 08d5543
+- [x] T2 (S6-S14) 401 as suspected revocation across checkout, payment reads, merchant order, refund, cancel; pause option and env; tests · inline · 628fa4e
+- [x] T3 (S18-S20) `createPayment` only inside the settlement scope, bound to order and `mpPaymentId`; tests · inline · e2cad27
 - [ ] T4 (S15, S16, S17, S21-S24) Docs: PRD, DECISIONS, VERIFICATION, README · inline · -
 - [ ] T5 Final `npm run verify` with PostgreSQL, independent verifier, native review where due · inline · -
 
@@ -57,3 +57,4 @@ Assumptions (not in the request): the verification pause is kept in memory per p
 
 - L1 (2026-10-19), the user's original request, verbatim: "Sobre esto quiero proponer tres cambios." followed by the three changes, the documentation adjustments and the rules, quoted in S1-S24 above and stored in the conversation of this feature (Spanish, pasted).
 - L2 (2026-10-19) Route: all tasks inline (understood change, no parallel units with disjoint surfaces: they share `connection.service.ts` and the e2e helpers).
+- L3 (2026-10-19) T1-T3 done (see commits). Decisions not covered by the request, recorded in DEC-55: a verification that finds the token valid changes nothing and does not retry; the pause is per process; the verification no longer marks `expiring` nor sends `token_renewal_failed`, and `reconcileAfterConnectNotification` only concludes a revocation on `invalid_grant` or an authentication rejection. Next: docs commit, final verify, verifier, native review where due.
