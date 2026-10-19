@@ -97,6 +97,7 @@ export const env = {
     preferenceTtlMinutes: Number(optional('MP_PREFERENCE_TTL_MINUTES') ?? 30),
     releaseAfterLastPaymentDays: Number(optional('MP_RELEASE_AFTER_LAST_PAYMENT_DAYS') ?? 180),
     releaseAfterRetiredDays: Number(optional('MP_RELEASE_AFTER_RETIRED_DAYS') ?? 30),
+    authCheckPauseMinutes: Number(optional('MP_AUTH_CHECK_PAUSE_MINUTES') ?? 5),
     preferenceItemsMode: (optional('MP_PREFERENCE_ITEMS_MODE') ?? 'lines') as 'lines' | 'total',
     dashboardUrl: optional('MP_DASHBOARD_URL') ?? `${publicUrl}/dashboard/mercado-pago`,
     // Tests and local demos only: accept http/local return URLs.

@@ -19,6 +19,17 @@ describe('resolveOptions', () => {
     });
   });
 
+  it('pauses 5 minutes before an account found fine is checked again, and refuses a bad pause', () => {
+    expect(resolveOptions(BASE).authCheckPauseMinutes).toBe(5);
+    expect(resolveOptions({ ...BASE, authCheckPauseMinutes: 0 }).authCheckPauseMinutes).toBe(0);
+    expect(() => resolveOptions({ ...BASE, authCheckPauseMinutes: Number('abc') })).toThrow(
+      /authCheckPauseMinutes/,
+    );
+    expect(() => resolveOptions({ ...BASE, authCheckPauseMinutes: -1 })).toThrow(
+      /authCheckPauseMinutes/,
+    );
+  });
+
   it('takes both windows from the options', () => {
     expect(
       resolveOptions({ ...BASE, releaseAfterLastPaymentDays: 90, releaseAfterRetiredDays: 7 }),

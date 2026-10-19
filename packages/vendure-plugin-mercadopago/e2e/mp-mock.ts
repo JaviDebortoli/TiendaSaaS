@@ -69,6 +69,15 @@ export class MercadoPagoMock {
   refreshGrants = new Map<string, OAuthGrant>();
   /** Access tokens `/users/me` accepts. */
   validTokens = new Set<string>();
+  /**
+   * Access tokens every API call refuses, by the status it answers: 401 is a revoked or replaced
+   * token, 403 a token that is valid but may not do that. The token endpoint is not affected.
+   */
+  rejectedTokens = new Map<string, number>();
+  /** When set, a refresh token works once, like Mercado Pago's: using it again is `invalid_grant`. */
+  singleUseRefreshTokens = false;
+  /** Artificial latency of the token endpoint, to make two renewals overlap. */
+  oauthDelayMs = 0;
   payments = new Map<number, MockPayment>();
   /** merchant order id -> the payment it belongs to. */
   merchantOrders = new Map<number, MockPayment>();
@@ -88,12 +97,25 @@ export class MercadoPagoMock {
 
   constructor() {
     this.server.use(
+      // A token that is refused gets its status from every endpoint but the token one, which has
+      // no bearer. Answering nothing here lets the request fall through to the handlers below.
+      http.all(`${API}/*`, async ({ request }) => {
+        const token = request.headers.get('authorization')?.replace('Bearer ', '');
+        const status = token ? this.rejectedTokens.get(token) : undefined;
+        if (status === undefined) return undefined;
+        await this.record(request);
+        return HttpResponse.json({ message: 'invalid_token', status }, { status });
+      }),
       http.post(`${API}/oauth/token`, async ({ request }) => {
         const body = await this.record(request);
+        if (this.oauthDelayMs) await new Promise((r) => setTimeout(r, this.oauthDelayMs));
         const grant =
           body?.grant_type === 'refresh_token'
             ? this.refreshGrants.get(String(body.refresh_token))
             : this.grants.get(String(body?.code));
+        if (grant && body?.grant_type === 'refresh_token' && this.singleUseRefreshTokens) {
+          this.refreshGrants.delete(String(body.refresh_token));
+        }
         if (!grant) {
           return HttpResponse.json(
             { error: 'invalid_grant', message: 'Error validating grant', status: 400 },
@@ -209,6 +231,9 @@ export class MercadoPagoMock {
     this.grants.clear();
     this.refreshGrants.clear();
     this.validTokens.clear();
+    this.rejectedTokens.clear();
+    this.singleUseRefreshTokens = false;
+    this.oauthDelayMs = 0;
     this.payments.clear();
     this.merchantOrders.clear();
     this.merchantOrderStatus = 200;
