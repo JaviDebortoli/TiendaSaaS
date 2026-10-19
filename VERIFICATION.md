@@ -19,16 +19,22 @@ prueban con los pasos de "Pruebas de sandbox".
 
 Puntos que aparecieron al implementar (no estaban en el PRD):
 
-| #   | Punto                                                                         | Estado                  | Quién lo resuelve             |
-| --- | ----------------------------------------------------------------------------- | ----------------------- | ----------------------------- |
-| V11 | Qué pasa si el envío deja de ser elegible al pasar a pago (PRD 9.6 paso 1)    | **Resuelto**            | Implementación                |
-| V12 | Respuesta de la renovación del token (campos, rotación, `expires_in`)         | **Pendiente** (ver V12) | Responsable, con credenciales |
-| V13 | Cuerpo y llegada de las notificaciones `mp-connect`                           | **Pendiente** (ver V13) | Responsable, con credenciales |
-| V14 | `expiration_date_from` en el pasado y clave de idempotencia de la preferencia | **Pendiente** (ver V14) | Responsable, con credenciales |
-| V15 | Mensaje de Mercado Pago al reembolsar sin saldo                               | **Pendiente** (ver V15) | Responsable, con credenciales |
-| V16 | Parámetros de la redirección de vuelta y demora de `auto_return`              | **Pendiente** (ver V16) | Responsable, con credenciales |
-| V17 | El `scope` que devuelve el OAuth incluye `offline_access`                     | **Pendiente** (ver V17) | Responsable, con credenciales |
-| V18 | Unidad de `ts` en `x-signature` (segundos o milisegundos)                     | **Pendiente** (ver V18) | Responsable, con credenciales |
+| #   | Punto                                                                          | Estado                  | Quién lo resuelve             |
+| --- | ------------------------------------------------------------------------------ | ----------------------- | ----------------------------- |
+| V11 | Qué pasa si el envío deja de ser elegible al pasar a pago (PRD 9.6 paso 1)     | **Resuelto**            | Implementación                |
+| V12 | Respuesta de la renovación del token (campos, rotación, `expires_in`)          | **Pendiente** (ver V12) | Responsable, con credenciales |
+| V13 | Cuerpo y llegada de las notificaciones `mp-connect`                            | **Pendiente** (ver V13) | Responsable, con credenciales |
+| V14 | `expiration_date_from` en el pasado y clave de idempotencia de la preferencia  | **Pendiente** (ver V14) | Responsable, con credenciales |
+| V15 | Mensaje de Mercado Pago al reembolsar sin saldo                                | **Pendiente** (ver V15) | Responsable, con credenciales |
+| V16 | Parámetros de la redirección de vuelta y demora de `auto_return`               | **Pendiente** (ver V16) | Responsable, con credenciales |
+| V17 | El `scope` que devuelve el OAuth incluye `offline_access`                      | **Pendiente** (ver V17) | Responsable, con credenciales |
+| V18 | Unidad de `ts` en `x-signature` (segundos o milisegundos)                      | **Pendiente** (ver V18) | Responsable, con credenciales |
+| V19 | `collector_id` del pago = `user_id` del OAuth = `user_id` de la notificación   | **Pendiente** (ver V19) | Responsable, con credenciales |
+| V20 | Si una autorización OAuth nueva de la misma cuenta anula los tokens anteriores | **Pendiente** (ver V20) | Responsable, con credenciales |
+
+**V19 se corre primero**: el rechazo de los pagos cuyo `collector_id` no coincide con la cuenta consultada
+(PRD 9.5) depende de que los tres identificadores sean el mismo número. Si no coinciden, no sigas: la
+regla hay que rediseñarla (avisá antes de tocarla).
 
 Las pruebas automáticas cubren todo lo demás con una API de Mercado Pago simulada. Lo que no pueden
 probar es lo que Mercado Pago hace de verdad: eso es lo que listan los puntos pendientes.
@@ -86,6 +92,61 @@ propio, o un dominio reservado de ngrok).
 
 **Cómo registrar la evidencia**: en cada punto, agregar abajo (sección "Evidencia") la fecha, qué se
 hizo, qué se vio (líneas de log sin tokens, capturas) y la conclusión, y pasar el punto a Resuelto.
+
+### V19: los tres identificadores de la cuenta son el mismo (correr primero)
+
+El plugin liquida un pago solo si el `collector_id` de `GET /v1/payments/{id}` es la cuenta con cuyo
+token se lo consultó (PRD 9.5, DEC-44). La documentación muestra el campo `collector_id` (número, en el
+primer nivel de la respuesta) pero no dice que sea el mismo número que el `user_id` del OAuth. Hay que
+comparar **tres** valores sobre **un mismo pago de prueba** de un vendedor vinculado por OAuth:
+
+| Qué                          | De dónde sale                                                                                                                                                                                                                                                                                                   | Valor |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| `user_id` del OAuth          | Dashboard › Ajustes › Mercado Pago: «Cuenta de Mercado Pago n.º ...» (es el `user_id` que devolvió `/oauth/token`), o `docker compose exec database psql -U tiendasaas -c 'select "mpUserId" from mercado_pago_account'`                                                                                        |       |
+| `user_id` de la notificación | Línea `Webhook received: topic=payment id=<pago> user_id=<este>` del log (V1)                                                                                                                                                                                                                                   |       |
+| `collector_id` del pago      | `docker compose exec database psql -U tiendasaas -c "select metadata from payment order by \"createdAt\" desc limit 1"`: campos `mpAccountUserId` y `mpCollectorId` (si el pago quedó en `needs_review`, la nota del pedido en el dashboard dice qué cuenta consultó y qué `collector_id` informó Mercado Pago) |       |
+
+1. Con el vendedor de prueba 1 vinculado (paso 8 de la preparación), pagar en la tienda con el comprador
+   de prueba (tarjeta `APRO`). Los pagos con credenciales de prueba no envían notificaciones: la
+   pantalla de resultado usa el respaldo (`syncMercadoPagoPayment`), que aplica la misma regla.
+2. Esperado: el pedido llega a `PaymentSettled`, `mpAccountUserId` y `mpCollectorId` son el mismo
+   número y es el del dashboard. Anotar el nombre real del campo si fuera otro.
+3. El valor de `user_id` de la notificación se anota con la compra de $1 de V1 (parte B).
+4. **Si algún valor no coincide** (el pedido queda en `needs_review` con `collector_mismatch` o
+   `collector_missing`, o los números son distintos): **detenerse y avisar antes de tocar la regla**.
+   No hay variable para desactivarla a propósito; hay que rediseñarla con el dato real.
+
+### V20: ¿una autorización nueva de la misma cuenta anula los tokens anteriores?
+
+El diseño funciona en los dos casos (los tokens viven una sola vez en la cuenta y la autorización
+nueva reemplaza los guardados, aunque la cuenta tenga un vínculo `retired` en un local y uno `active`
+en otro), pero hay que saber cuál es el comportamiento real. Solo en sandbox: los pasos imprimen un
+token en la terminal.
+
+1. Con el vendedor de prueba vinculado, guardar su token actual:
+
+   ```
+   docker compose exec server node -e '
+   const { Client } = require("pg");
+   const { TokenCipher, accountAccessContext } = require("vendure-plugin-mercadopago");
+   (async () => {
+     const db = new Client({ host: process.env.DB_HOST, port: +process.env.DB_PORT, user: process.env.DB_USERNAME, password: process.env.DB_PASSWORD, database: process.env.DB_NAME });
+     await db.connect();
+     const { rows } = await db.query(`select "mpUserId", "accessToken" from mercado_pago_account`);
+     const cipher = new TokenCipher(process.env.MP_TOKEN_ENCRYPTION_KEY);
+     for (const r of rows) console.log(r.mpUserId, cipher.decrypt(r.accessToken, accountAccessContext(r.mpUserId)));
+     await db.end();
+   })();'
+   ```
+
+   Anotar el token como **A**.
+
+2. En el dashboard, **Vincular otra cuenta** y autorizar con **la misma** cuenta de prueba. Volver a
+   imprimir el token: **B** (tiene que ser distinto de A).
+3. Probar el viejo: `curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer <A>" https://api.mercadopago.com/users/me`.
+   - `200`: la autorización nueva **no** anula la anterior.
+   - `401`: la anula.
+4. Anotar el resultado. En los dos casos la plataforma sigue funcionando: usa B.
 
 ### V1: el webhook de la aplicación recibe los pagos de los locales
 
@@ -209,7 +270,10 @@ las dos. Anotar con cuál llega en la práctica (`ts=` con 10 dígitos: segundos
 Pruebas de punta a punta con montos bajos en producción, con una cuenta real propia como local
 (PRD 12): pago aprobado, rechazado, pendiente (efectivo) que se aprueba después, reembolso total y
 parcial, desvinculación y nueva vinculación, y un pago con el webhook apagado (debe liquidarse con
-el respaldo de la pantalla de resultado).
+el respaldo de la pantalla de resultado). Con dos cuentas de prueba: cambiar un local de cuenta (el
+reembolso de una venta de la cuenta anterior tiene que seguir funcionando) y traspasar una cuenta de
+un local a otro (cada venta se asigna a su local), y `docker compose run --rm release-links --dry-run`
+para ver qué vínculos se liberarían.
 
 ---
 
