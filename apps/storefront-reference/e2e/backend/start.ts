@@ -25,6 +25,7 @@ const VENDURE_PORT = 3300;
 const MP_PAGE_PORT = 3399;
 const STOREFRONT_URL = 'http://localhost:3301';
 const SELLER_ID = 7777;
+const PREVIOUS_SELLER_ID = 7000;
 const ACCESS_TOKEN = 'APP_USR-e2e-store-token';
 const WEBHOOK_SECRET = 'test-webhook-secret';
 
@@ -93,6 +94,7 @@ async function pay(preferenceId: string, scenario: Scenario): Promise<string> {
     currency_id: 'ARS',
     external_reference: orderCode,
     ownerToken: ACCESS_TOKEN,
+    collector_id: SELLER_ID,
   });
   if (scenario === 'approve') {
     await sendWebhook(VENDURE_PORT, {
@@ -225,6 +227,14 @@ async function main() {
     },
   );
 
+  // The store sold with another account before: the dashboard lists it among the previous ones.
+  await app.get(MercadoPagoConnectionService).link(store.channelId, {
+    access_token: 'APP_USR-e2e-store-previous-token',
+    refresh_token: 'TG-e2e-store-previous-refresh',
+    user_id: PREVIOUS_SELLER_ID,
+    expires_in: 15552000,
+    scope: 'offline_access',
+  });
   await app.get(MercadoPagoConnectionService).link(store.channelId, {
     access_token: ACCESS_TOKEN,
     refresh_token: 'TG-e2e-store-refresh',
