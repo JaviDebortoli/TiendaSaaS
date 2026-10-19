@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { isSettling, runAsSettlement } from './settlement-scope';
+import type { MercadoPagoAccount } from './entities/mercadopago-account.entity';
+import type { MercadoPagoPayment } from './services/mercadopago-api.service';
+import { isSettling, runAsSettlement, Settlement, verifiedSettlement } from './settlement-scope';
+
+const scopeFor = (orderId: number | string, mpPaymentId = '99'): Settlement => ({
+  orderId,
+  mpPaymentId,
+  payment: { id: Number(mpPaymentId) } as MercadoPagoPayment,
+  account: { mpUserId: '1' } as MercadoPagoAccount,
+  externalReference: 'REF',
+});
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -9,7 +19,7 @@ describe('settlement scope', () => {
   });
 
   it('opens only for the order being settled, inside the callback', async () => {
-    await runAsSettlement(7, async () => {
+    await runAsSettlement(scopeFor(7), async () => {
       expect(isSettling(7)).toBe(true);
       expect(isSettling('7')).toBe(true); // ids compare as text, like the rest of the plugin
       expect(isSettling(8)).toBe(false);
@@ -19,11 +29,11 @@ describe('settlement scope', () => {
   });
 
   it('closes when the callback ends, also when it fails', async () => {
-    await runAsSettlement(7, async () => undefined);
+    await runAsSettlement(scopeFor(7), async () => undefined);
     expect(isSettling(7)).toBe(false);
 
     await expect(
-      runAsSettlement(7, async () => {
+      runAsSettlement(scopeFor(7), async () => {
         throw new Error('boom');
       }),
     ).rejects.toThrow('boom');
@@ -32,7 +42,7 @@ describe('settlement scope', () => {
 
   it('does not leak to a concurrent request that is not settling', async () => {
     const seen: Record<string, boolean> = {};
-    const settling = runAsSettlement(7, async () => {
+    const settling = runAsSettlement(scopeFor(7), async () => {
       await tick();
       seen.settling = isSettling(7);
     });
@@ -46,11 +56,11 @@ describe('settlement scope', () => {
 
   it('keeps two settlements apart', async () => {
     const results = await Promise.all([
-      runAsSettlement(1, async () => {
+      runAsSettlement(scopeFor(1), async () => {
         await tick();
         return [isSettling(1), isSettling(2)];
       }),
-      runAsSettlement(2, async () => {
+      runAsSettlement(scopeFor(2), async () => {
         await tick();
         return [isSettling(1), isSettling(2)];
       }),
@@ -60,5 +70,20 @@ describe('settlement scope', () => {
       [true, false],
       [false, true],
     ]);
+  });
+
+  it('hands over the verified payment only for the exact order and payment id it was opened for', async () => {
+    await runAsSettlement(scopeFor(7, '99'), async () => {
+      expect(verifiedSettlement(7, '99')).toMatchObject({
+        mpPaymentId: '99',
+        externalReference: 'REF',
+      });
+      expect(verifiedSettlement('7', '99')).toBeDefined();
+      // The scope of one order does not serve another order, nor another payment.
+      expect(verifiedSettlement(8, '99')).toBeUndefined();
+      expect(verifiedSettlement(7, '100')).toBeUndefined();
+      expect(verifiedSettlement(7, '')).toBeUndefined();
+    });
+    expect(verifiedSettlement(7, '99')).toBeUndefined();
   });
 });

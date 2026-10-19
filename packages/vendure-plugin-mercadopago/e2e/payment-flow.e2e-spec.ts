@@ -436,30 +436,44 @@ describe('multi-tenancy', () => {
 });
 
 describe('the storefront cannot settle an order by itself (PRD 9.5)', () => {
-  it('rejects addPaymentToOrder with an invented payment id', async () => {
+  /** The public mutation is refused before Mercado Pago is asked anything. */
+  const refused = async (metadata: Record<string, unknown>) => {
+    mp.requests = [];
+    await expect(
+      shopClient.query(ADD_PAYMENT, { input: { method: 'mercado-pago', metadata } }),
+    ).rejects.toThrow(/payment processor/);
+    expect(mp.requests).toHaveLength(0);
+  };
+
+  it('refuses addPaymentToOrder with an invented payment id', async () => {
     const order = await checkoutAsGuest(shopClient, store, payable);
 
-    const { addPaymentToOrder } = await shopClient.query(ADD_PAYMENT, {
-      input: { method: 'mercado-pago', metadata: { mpPaymentId: '424242' } },
-    });
+    await refused({ mpPaymentId: '424242' });
 
-    expect(addPaymentToOrder.errorCode).toBe('PAYMENT_FAILED_ERROR');
     expect((await orderOf(order.code)).state).toBe('ArrangingPayment');
   });
 
-  it('rejects a payment that is real but pending', async () => {
+  it('refuses a payment that is real but pending', async () => {
     const order = await checkoutAsGuest(shopClient, store, payable);
     const payment = mpPayment(order, { status: 'pending' });
 
-    const { addPaymentToOrder } = await shopClient.query(ADD_PAYMENT, {
-      input: { method: 'mercado-pago', metadata: { mpPaymentId: String(payment.id) } },
-    });
+    await refused({ mpPaymentId: String(payment.id) });
 
-    expect(addPaymentToOrder.errorCode).toBe('PAYMENT_FAILED_ERROR');
     expect((await orderOf(order.code)).state).toBe('ArrangingPayment');
   });
 
-  it('rejects an approved payment that belongs to another order', async () => {
+  it('refuses a real, approved payment of the very order, without asking Mercado Pago', async () => {
+    const order = await checkoutAsGuest(shopClient, store, payable);
+    const payment = mpPayment(order);
+
+    await refused({ mpPaymentId: String(payment.id) });
+
+    const after = await orderOf(order.code);
+    expect(after.state).toBe('ArrangingPayment');
+    expect(after.payments ?? []).toHaveLength(0);
+  });
+
+  it('refuses an approved payment that belongs to another order', async () => {
     const someoneElses = await checkoutAsGuest(
       shopClient,
       store,
@@ -471,23 +485,16 @@ describe('the storefront cannot settle an order by itself (PRD 9.5)', () => {
     // A different buyer, in a different session, tries to use that payment for their own order.
     const mine = await checkoutAsGuest(shopClient, store, payable);
 
-    const { addPaymentToOrder } = await shopClient.query(ADD_PAYMENT, {
-      input: { method: 'mercado-pago', metadata: { mpPaymentId: String(payment.id) } },
-    });
+    await refused({ mpPaymentId: String(payment.id) });
 
-    expect(addPaymentToOrder.errorCode).toBe('PAYMENT_FAILED_ERROR');
     expect((await orderOf(mine.code)).state).toBe('ArrangingPayment');
     expect((await orderOf(someoneElses.code)).state).toBe('ArrangingPayment');
   });
 
-  it('rejects addPaymentToOrder without a payment id', async () => {
+  it('refuses addPaymentToOrder without a payment id', async () => {
     await checkoutAsGuest(shopClient, store, payable);
 
-    const { addPaymentToOrder } = await shopClient.query(ADD_PAYMENT, {
-      input: { method: 'mercado-pago', metadata: {} },
-    });
-
-    expect(addPaymentToOrder.errorCode).toBe('PAYMENT_FAILED_ERROR');
+    await refused({});
   });
 });
 

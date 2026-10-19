@@ -440,16 +440,24 @@ export class MercadoPagoPaymentProcessor {
 
     try {
       // Vendure 3.8 requires a transaction around addPaymentToOrder.
-      const result = await runAsSettlement(order.id, () =>
-        this.connection.withTransaction(ctx, async (txCtx) => {
-          // Payments of the same order are applied one at a time, so two different approved
-          // payments racing for one order cannot both be added.
-          await this.lockOrder(txCtx, order.id);
-          return this.orderService.addPaymentToOrder(txCtx, order.id, {
-            method: methodCode,
-            metadata: { mpPaymentId },
-          });
-        }),
+      const result = await runAsSettlement(
+        {
+          orderId: order.id,
+          mpPaymentId,
+          payment,
+          account,
+          externalReference: entry!.externalReference,
+        },
+        () =>
+          this.connection.withTransaction(ctx, async (txCtx) => {
+            // Payments of the same order are applied one at a time, so two different approved
+            // payments racing for one order cannot both be added.
+            await this.lockOrder(txCtx, order.id);
+            return this.orderService.addPaymentToOrder(txCtx, order.id, {
+              method: methodCode,
+              metadata: { mpPaymentId },
+            });
+          }),
       );
       if ('errorCode' in result) {
         await this.setClaimStatus(mpPaymentId, 'recorded');

@@ -1,10 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { Order, RequestContext } from '@vendure/core';
+import { RequestContext } from '@vendure/core';
 import { MercadoPagoAccount } from '../entities/mercadopago-account.entity';
 import { MercadoPagoPreference } from '../entities/mercadopago-preference.entity';
 import { toMercadoPagoAmount } from '../lib/amounts';
 import { CollectorCheck, checkCollector } from '../lib/collector';
-import { validatePaymentAgainstOrder } from '../lib/payment-validation';
 import {
   MercadoPagoAccountRevokedError,
   MercadoPagoConnectionService,
@@ -24,10 +23,6 @@ export interface FoundPayment {
   account: MercadoPagoAccount;
   collector: CollectorCheck;
 }
-
-export type VerifyResult =
-  | { ok: true; payment: MercadoPagoPayment; account: MercadoPagoAccount }
-  | { ok: false; message: string };
 
 /** Why a payment may not settle an order, and the evidence the review note keeps. */
 export type IssuanceCheck =
@@ -217,97 +212,6 @@ export class MercadoPagoPaymentOperations {
     if (tried === 0) throw new MercadoPagoNotConnectedError();
     if (authError) throw authError;
     return null;
-  }
-
-  /**
-   * Independent proof that a payment is real, approved, issued for this order and covers it. The
-   * handler runs it on every `addPaymentToOrder`, so a buyer cannot settle an order through the
-   * public Shop API by sending an arbitrary `mpPaymentId`: only a payment that Mercado Pago itself
-   * reports as approved, that belongs to a preference the platform issued for this order and was
-   * collected by that preference's account, is accepted (PRD 9.5, 9.7).
-   *
-   * The accounts tried are the ones the platform issued preferences with for this order, in any
-   * state of their link: by the time this runs a payment of a released link that still has tokens
-   * is honoured and reported rather than lost.
-   */
-  async verifyApproved(
-    ctx: RequestContext,
-    order: Order,
-    mpPaymentId: string,
-    amount: number,
-  ): Promise<VerifyResult> {
-    let found: FoundPayment | null;
-    let entry: MercadoPagoPreference | null;
-    try {
-      const issued = await this.registry.listForOrder(order.code);
-      const accounts = [
-        ...new Map(issued.map((row) => [String(row.accountId), row.account])).values(),
-      ];
-      if (accounts.length === 0) {
-        return { ok: false, message: 'No Mercado Pago preference was issued for this order.' };
-      }
-      found = await this.findPayment(accounts, mpPaymentId);
-      entry = found?.payment.external_reference
-        ? await this.registry.findByExternalReference(found.payment.external_reference)
-        : null;
-    } catch (error) {
-      return { ok: false, message: this.describe(error, 'Could not verify the payment') };
-    }
-    if (!found) {
-      return { ok: false, message: 'Could not verify the payment: Payment not found' };
-    }
-    const { payment, account } = found;
-    if (payment.status !== 'approved') {
-      return {
-        ok: false,
-        message: `The Mercado Pago payment is ${payment.status ?? 'unknown'}, not approved.`,
-      };
-    }
-    let issuance: IssuanceCheck;
-    try {
-      issuance = await this.checkIssuance({ payment, account, entry, orderCode: order.code });
-    } catch (error) {
-      return { ok: false, message: this.describe(error, 'Could not verify the payment') };
-    }
-    if (!issuance.ok) {
-      await this.reviews.markNeedsReview(
-        ctx,
-        order,
-        mpPaymentId,
-        issuance.reason,
-        issuance.detail,
-        issuance.observed,
-      );
-      return { ok: false, message: this.issuanceMessage(issuance.reason) };
-    }
-    const validation = validatePaymentAgainstOrder(payment, {
-      externalReference: entry!.externalReference,
-      totalWithTax: order.totalWithTax,
-      currencyCode: order.currencyCode,
-    });
-    if (!validation.ok) {
-      return {
-        ok: false,
-        message: `The Mercado Pago payment does not match the order (${validation.reason}).`,
-      };
-    }
-    if (amount !== order.totalWithTax) {
-      return { ok: false, message: 'Partial payments are not supported for Mercado Pago.' };
-    }
-    return { ok: true, payment, account };
-  }
-
-  private issuanceMessage(reason: ReviewReason): string {
-    switch (reason) {
-      case 'collector_missing':
-        return 'Mercado Pago did not say which account collected the payment.';
-      case 'collector_mismatch':
-        return 'The payment was collected by a different Mercado Pago account.';
-      case 'preference_mismatch':
-        return 'The payment belongs to another Mercado Pago preference than the one issued for the order.';
-      default:
-        return 'The payment does not belong to a Mercado Pago preference issued for this order.';
-    }
   }
 
   /** Cancels a payment that is still `pending` or `in_process` (PRD 9.9). */
