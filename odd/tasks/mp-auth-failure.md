@@ -6,6 +6,7 @@ Branch: `feat/mp-auth-failure` (stacked on `feat/mp-preference-registry`, PR #2)
 ## Specs
 
 Part 1 - lock between processes
+
 - S1. "La renovación y la verificación de revocación toman un `pg_advisory_xact_lock` por cuenta (como el bloqueo por pedido de DEC-14). En SQL.js se mantiene el candado en proceso."
 - S2. "Dentro del candado, siempre se releen los tokens de la base antes de renovar o de concluir algo. Si los tokens cambiaron desde que se usaron, no hubo revocación: se usan los nuevos."
 - S3. "`markDisconnected` solo se puede llamar después de esa relectura y dentro del candado."
@@ -13,6 +14,7 @@ Part 1 - lock between processes
 - S5. "Actualizá DEC-49 y el riesgo correspondiente de DEC-51."
 
 Part 2 - a 401 is a suspected revocation
+
 - S6. "Cuando cualquier llamada con el token de una cuenta recibe un error de autenticación de Mercado Pago (crear una preferencia, consultar un pago o su orden, reembolsar, cancelar), se corre la verificación de DEC-16 con el candado del punto 1."
 - S7. "Renovación exitosa: se guardan los tokens y se reintenta **una vez** la operación original. Al crear una preferencia, el comprador no se entera."
 - S8. "Revocación confirmada: sigue el camino único de DEC-42 (cuenta `disconnected`, vínculos `retired`, aviso `account_disconnected`). En el checkout, el comprador ve un mensaje claro, distinto del error genérico: que el local no puede cobrar con Mercado Pago en este momento. El método deja de ser elegible."
@@ -27,12 +29,14 @@ Part 2 - a 401 is a suspected revocation
 - S17. "Actualizá el PRD (9.4, 9.5, 9.6 y 9.9) y DECISIONS.md con la entrada nueva."
 
 Part 3 - `createPayment`
+
 - S18. "`createPayment` rechaza **sin consultar a Mercado Pago** cualquier llamada que no ocurra dentro del alcance de liquidación de DEC-45. Devuelve un error, no un pago `Declined`, y no deja rastro en el pedido."
 - S19. "Dentro del alcance, el pago ya fue verificado por el procesador. `createPayment` puede usar ese resultado en lugar de volver a consultar, siempre que el alcance esté ligado al pedido y al `mpPaymentId` exactos que se verificaron."
 - S20. Tests: `addPaymentToOrder` from the Shop API with a real approved `mpPaymentId` does not settle and does not query Mercado Pago; the normal flow (webhook and `syncMercadoPagoPayment`) still settles; "El alcance de un pedido no sirve para otro pedido ni para otro pago."
 - S21. "Actualizá DEC-13 y DEC-45 y el PRD (9.5 y 11)."
 
 Part 4 - documentation
+
 - S22. "PRD 9.5, párrafo de DEC-44: aclarar que las cuentas candidatas ya no se prueban en el modo `preference` ni en `syncMercadoPagoPayment` (como dice 9.7)."
 - S23. "DECISIONS.md: agregar 'reemplazado en parte por DEC-52' a DEC-13, DEC-20 y DEC-43, con una línea sobre qué cambió."
 - S24. "DEC-51: registrar el caso de una preferencia creada en Mercado Pago cuyo `preference_id` no se llegó a guardar (por ejemplo, por una caída del servidor). Su pago queda en revisión manual y se avisa: falla cerrado, se acepta."

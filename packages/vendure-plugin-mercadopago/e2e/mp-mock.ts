@@ -74,6 +74,11 @@ export class MercadoPagoMock {
    * token, 403 a token that is valid but may not do that. The token endpoint is not affected.
    */
   rejectedTokens = new Map<string, number>();
+  /**
+   * When set, `/users/me` answers this status whatever the token is: 200 for a check that finds the
+   * account fine while other calls are refused, 503 for one that cannot tell.
+   */
+  meStatus: number | undefined = undefined;
   /** When set, a refresh token works once, like Mercado Pago's: using it again is `invalid_grant`. */
   singleUseRefreshTokens = false;
   /** Artificial latency of the token endpoint, to make two renewals overlap. */
@@ -97,6 +102,16 @@ export class MercadoPagoMock {
 
   constructor() {
     this.server.use(
+      http.get(`${API}/users/me`, async ({ request }) => {
+        if (this.meStatus === undefined) return undefined;
+        await this.record(request);
+        return this.meStatus === 200
+          ? HttpResponse.json({ id: 1 })
+          : HttpResponse.json(
+              { message: 'down', status: this.meStatus },
+              { status: this.meStatus },
+            );
+      }),
       // A token that is refused gets its status from every endpoint but the token one, which has
       // no bearer. Answering nothing here lets the request fall through to the handlers below.
       http.all(`${API}/*`, async ({ request }) => {
@@ -232,6 +247,7 @@ export class MercadoPagoMock {
     this.refreshGrants.clear();
     this.validTokens.clear();
     this.rejectedTokens.clear();
+    this.meStatus = undefined;
     this.singleUseRefreshTokens = false;
     this.oauthDelayMs = 0;
     this.payments.clear();

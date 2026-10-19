@@ -594,6 +594,12 @@ export class MercadoPagoConnectionService {
     }
   }
 
+  /** The stores that still use the account or can refund with it (an `active` or `retired` link). */
+  async channelIdsOfAccount(accountId: ID): Promise<ID[]> {
+    const rows = await this.links.find({ where: { accountId, status: In(LIVE_LINKS) } });
+    return [...new Map(rows.map((row) => [String(row.channelId), row.channelId])).values()];
+  }
+
   /** Tells every store that still uses the account (or can refund with it). */
   private async notifyChannels(
     account: MercadoPagoAccount,

@@ -168,7 +168,9 @@ suite('concurrency on PostgreSQL (PRD 12, 16.7)', () => {
   });
 
   describe('renewing and checking an account from two processes (PRD 9.4)', () => {
-    const OWNER = 9002;
+    // An account and a store of their own: the race above leaves no say in who holds 9002.
+    const OWNER = 9100;
+    let lockStore: TestStore;
     const grants = (n: number): OAuthGrant => ({
       access_token: `APP_USR-lock-${n}`,
       refresh_token: `TG-lock-${n}`,
@@ -199,7 +201,8 @@ suite('concurrency on PostgreSQL (PRD 12, 16.7)', () => {
       ).map((l) => l.status);
 
     beforeAll(async () => {
-      await connections.link(otherStore.channelId, grants(1));
+      lockStore = await createStore(adminClient, 'cc-lock', { storefrontUrl: STOREFRONT_URL });
+      await connections.link(lockStore.channelId, grants(1));
     });
 
     it('two processes renewing the same account at once spend the refresh token once and revoke nothing', async () => {
