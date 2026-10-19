@@ -160,6 +160,11 @@ describe('token renewal (PRD 9.4)', () => {
     );
     // Still usable until the access token itself expires.
     expect(connections.isUsable(row)).toBe(true);
+    // A failed renewal is not a revocation: the link stays active and the account stays taken.
+    expect(await statuses(storeB)).toEqual({ '1': 'active' });
+    await expect(connections.link(storeC.channelId, grant(1, 'c1'))).rejects.toBeInstanceOf(
+      AccountAlreadyLinkedError,
+    );
   });
 
   it('renews only the accounts some store still uses that expire within the window', async () => {
@@ -278,14 +283,33 @@ describe('mp-connect notifications (PRD 9.4)', () => {
     expect(row.refreshToken).toBe('');
     expect(connections.isUsable(row)).toBe(false);
     expect(events.map((e) => e.reason)).toContain('account_disconnected');
+    // The account belongs to its holder: the store cannot go on with it without authorizing again.
+    expect(await statuses(storeA)).toEqual({ '1': 'retired' });
+    expect((await linkOf(storeA, 1))!.retiredAt).toBeInstanceOf(Date);
+    expect(await connections.findActiveLink(storeA.channelId)).toBeNull();
+  });
+
+  it('a body that claims a revocation is not enough: the account and its links stay as they are', async () => {
+    const tokens = grant(1, 'v1');
+    await connections.link(storeA.channelId, tokens);
+    mp.validTokens.add(tokens.access_token); // Mercado Pago says the access still works
+
+    expect(await connections.reconcileAfterConnectNotification('1')).toBe('still_connected');
+
+    expect((await account(1)).status).toBe('connected');
+    expect(await statuses(storeA)).toEqual({ '1': 'active' });
   });
 
   it('does not disconnect when Mercado Pago is merely unavailable', async () => {
     await connections.link(storeA.channelId, grant(1, 'v1'));
     mp.server.use(
+      // `once`: a handler added with `use` would otherwise outlive this test.
       http.get(
         'https://api.mercadopago.com/users/me',
         () => new HttpResponse(null, { status: 503 }),
+        {
+          once: true,
+        },
       ),
     );
 
@@ -312,7 +336,7 @@ describe('eligibility (PRD 9.4)', () => {
     expect(await connections.isChannelUsable(storeA.channelId)).toBe(false);
   });
 
-  it('a revoked account makes every link to it ineligible', async () => {
+  it('a revoked account leaves every store without it: none is eligible', async () => {
     await connections.link(storeA.channelId, grant(1, 'v1'));
     await connections.retire(storeA.channelId);
     await connections.link(storeB.channelId, grant(1, 'v1'));
@@ -322,9 +346,9 @@ describe('eligibility (PRD 9.4)', () => {
 
     expect(await connections.isChannelUsable(storeA.channelId)).toBe(false);
     expect(await connections.isChannelUsable(storeB.channelId)).toBe(false);
-    // The links themselves are untouched: only the account stopped working.
+    // The revocation retired the link of the store that still sold with the account.
     expect(await statuses(storeA)).toEqual({ '1': 'retired' });
-    expect(await statuses(storeB)).toEqual({ '1': 'active' });
+    expect(await statuses(storeB)).toEqual({ '1': 'retired' });
   });
 });
 
@@ -346,20 +370,47 @@ describe('linking an account to a store (PRD 9.2)', () => {
     expect(await connections.findActiveLink(storeB.channelId)).toBeNull();
   });
 
-  it('keeps rejecting an account that another store sells with even after it was revoked', async () => {
+  it('lets another store take an account whose access was revoked', async () => {
     await connections.link(storeA.channelId, grant(1, 'a1'));
-    await connections.markDisconnected((await account(1)).id, 'revoked');
+    expect(await connections.reconcileAfterConnectNotification('1')).toBe('disconnected');
 
-    await expect(connections.link(storeB.channelId, grant(1, 'b1'))).rejects.toBeInstanceOf(
-      AccountAlreadyLinkedError,
-    );
-
-    // The store that holds it can retire it, and then anyone can take the account.
-    await connections.retire(storeA.channelId);
+    // The revocation retired A's link, so the account is free: the holder authorizes it in B.
     await connections.link(storeB.channelId, grant(1, 'b1'));
+
     expect(await statuses(storeA)).toEqual({ '1': 'retired' });
     expect(await statuses(storeB)).toEqual({ '1': 'active' });
     expect(connections.isUsable(await account(1))).toBe(true);
+  });
+
+  it('authorizing a revoked account again in the same store reactivates its link', async () => {
+    await connections.link(storeA.channelId, grant(1, 'a1'));
+    await connections.markDisconnected((await account(1)).id, 'revoked');
+    const linkId = (await linkOf(storeA, 1))!.id;
+
+    await connections.link(storeA.channelId, grant(1, 'a2'));
+
+    expect(await statuses(storeA)).toEqual({ '1': 'active' });
+    expect((await linkOf(storeA, 1))!.id).toBe(linkId);
+    expect((await linkOf(storeA, 1))!.retiredAt).toBeNull();
+    expect((await connections.getAccessToken(storeA.channelId)).accessToken).toBe(
+      'APP_USR-access-1-a2',
+    );
+    expect(await links().count()).toBe(1);
+  });
+
+  it('rejects authorizing a revoked account in its original store once another store took it, changing nothing', async () => {
+    await connections.link(storeA.channelId, grant(1, 'a1'));
+    await connections.markDisconnected((await account(1)).id, 'revoked');
+    await connections.link(storeB.channelId, grant(1, 'b1'));
+    const before = await account(1);
+
+    await expect(connections.link(storeA.channelId, grant(1, 'a2'))).rejects.toBeInstanceOf(
+      AccountAlreadyLinkedError,
+    );
+
+    expect(await statuses(storeA)).toEqual({ '1': 'retired' });
+    expect(await statuses(storeB)).toEqual({ '1': 'active' });
+    expect((await account(1)).accessToken).toBe(before.accessToken);
   });
 
   it('treats the same account on the same store as a reconnection and replaces its tokens', async () => {

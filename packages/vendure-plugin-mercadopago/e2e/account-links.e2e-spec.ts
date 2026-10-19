@@ -1,11 +1,12 @@
-import { EventBus, TransactionalConnection } from '@vendure/core';
+import { EventBus, Logger, TransactionalConnection } from '@vendure/core';
 import gql from 'graphql-tag';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MercadoPagoAccount,
   MercadoPagoAttentionEvent,
   MercadoPagoChannelLink,
   MercadoPagoConnectionService,
+  MercadoPagoPreference,
 } from '../src';
 import { MercadoPagoPaymentClaim } from '../src/entities/mercadopago-payment-claim.entity';
 import { MercadoPagoPaymentProcessor } from '../src/services/payment-processor.service';
@@ -13,11 +14,14 @@ import { MercadoPagoMock, MockPayment, OAuthGrant } from './mp-mock';
 import {
   BACK_URLS,
   checkoutAsGuest,
+  issuedFor,
   notesOf,
   PayableStore,
   provisionStore,
   readOrder,
+  referenceFields,
   STOREFRONT_URL,
+  useIssuer,
 } from './shop-helpers';
 import { asSuperAdmin, createMpTestEnvironment, createStore, TestStore } from './test-env';
 
@@ -48,6 +52,8 @@ const accounts = () =>
   server.app.get(TransactionalConnection).rawConnection.getRepository(MercadoPagoAccount);
 const links = () =>
   server.app.get(TransactionalConnection).rawConnection.getRepository(MercadoPagoChannelLink);
+const preferences = () =>
+  server.app.get(TransactionalConnection).rawConnection.getRepository(MercadoPagoPreference);
 const claims = () =>
   server.app.get(TransactionalConnection).rawConnection.getRepository(MercadoPagoPaymentClaim);
 
@@ -63,7 +69,7 @@ function pay(
     status: 'approved',
     transaction_amount: order.totalWithTax / 100,
     currency_id: 'ARS',
-    external_reference: order.code,
+    ...referenceFields(order),
     ownerToken: grant.access_token,
     collector_id: grant.user_id,
     ...overrides,
@@ -98,8 +104,8 @@ const createPreference = (orderCode: string) =>
 const lastPreference = () => mp.requestsTo('POST', '/checkout/preferences').at(-1)!;
 
 const SYNC = gql`
-  mutation ($orderCode: String!, $paymentId: String!) {
-    syncMercadoPagoPayment(orderCode: $orderCode, paymentId: $paymentId) {
+  mutation ($externalReference: String!, $paymentId: String!) {
+    syncMercadoPagoPayment(externalReference: $externalReference, paymentId: $paymentId) {
       __typename
       ... on MercadoPagoPaymentSync {
         outcome
@@ -172,10 +178,15 @@ async function refundWhole(store: TestStore, code: string) {
 }
 
 const reasons = () => events.map((e) => e.reason);
+const statuses = async (store: TestStore) =>
+  Object.fromEntries(
+    (await connections.listLinks(store.channelId)).map((l) => [l.account.mpUserId, l.status]),
+  );
 
 beforeAll(async () => {
   mp.start();
   await init();
+  useIssuer(server.app);
   connections = server.app.get(MercadoPagoConnectionService);
   processor = server.app.get(MercadoPagoPaymentProcessor);
   server.app
@@ -196,6 +207,8 @@ afterAll(async () => {
 beforeEach(async () => {
   mp.reset();
   events.length = 0;
+  // Preferences point at accounts and links, so they go first.
+  await preferences().createQueryBuilder().delete().execute();
   await links().createQueryBuilder().delete().execute();
   await accounts().createQueryBuilder().delete().execute();
 });
@@ -269,25 +282,23 @@ describe('a store that changes account (X to Y)', () => {
     expect(await stateOf(storeA, voucher.code)).toBe('PaymentSettled');
   });
 
-  it('tries the accounts of the store until one can see the payment', async () => {
+  it('reads a payment with the account of its preference, never trying the others', async () => {
     await connections.link(storeA.channelId, gx);
-    await connections.link(storeA.channelId, gy);
-    const order = await checkoutAsGuest(shopClient, storeA, payableA);
+    const order = await checkoutAsGuest(shopClient, storeA, payableA); // issued with X
+    await connections.link(storeA.channelId, gy); // the store changes account
     const payment = pay(order, gx);
 
-    // Preference mode and the sync mutation know the store but not the account.
+    // The sync mutation holds the reference: the registry names the account, nobody guesses it.
     const result = await processor.process({
       mpPaymentId: String(payment.id),
-      channelId: storeA.channelId,
+      externalReference: issuedFor(order).externalReference,
     });
 
     expect(result).toMatchObject({ outcome: 'settled', orderCode: order.code });
-    const tokens = mp
-      .requestsTo('GET', `/v1/payments/${payment.id}`)
-      .map((r) => authOf(r))
-      .slice(0, 2);
-    // The account the store sells with is tried first, then the retired one.
-    expect(tokens).toEqual([`Bearer ${gy.access_token}`, `Bearer ${gx.access_token}`]);
+    const tokens = new Set(
+      mp.requestsTo('GET', `/v1/payments/${payment.id}`).map((r) => authOf(r)),
+    );
+    expect(tokens).toEqual(new Set([`Bearer ${gx.access_token}`]));
   });
 });
 
@@ -406,6 +417,44 @@ describe('an approved payment for a released link', () => {
   });
 });
 
+describe('a pending payment of an account whose access was revoked (PRD 9.4)', () => {
+  it('cannot be verified while the account has no tokens: the platform is told and nothing settles', async () => {
+    await connections.link(storeA.channelId, gx);
+    const voucher = await checkoutAsGuest(shopClient, storeA, payableA);
+    const voucherPayment = pay(voucher, gx, { status: 'pending' });
+    expect(await notify(voucherPayment, X)).toMatchObject({ outcome: 'pending' });
+    expect(await connections.reconcileAfterConnectNotification(String(X))).toBe('disconnected');
+    events.length = 0;
+    voucherPayment.status = 'approved';
+
+    expect(await notify(voucherPayment, X)).toEqual({
+      outcome: 'ignored',
+      reason: 'not_connected',
+    });
+
+    expect(await stateOf(storeA, voucher.code)).toBe('ArrangingPayment');
+    expect(events.map((e) => [e.reason, e.channelId])).toEqual([['unverifiable_payment', null]]);
+  });
+
+  it('settles like any retired link once the holder authorizes the account again somewhere', async () => {
+    await connections.link(storeA.channelId, gx);
+    const voucher = await checkoutAsGuest(shopClient, storeA, payableA);
+    const voucherPayment = pay(voucher, gx, { status: 'pending' });
+    await notify(voucherPayment, X);
+    await connections.reconcileAfterConnectNotification(String(X));
+    await connections.link(storeB.channelId, gx); // the holder authorizes X again, in store B
+    voucherPayment.status = 'approved';
+
+    expect(await notify(voucherPayment, X)).toMatchObject({
+      outcome: 'settled',
+      orderCode: voucher.code,
+    });
+
+    expect(await stateOf(storeA, voucher.code)).toBe('PaymentSettled');
+    expect(await statuses(storeA)).toEqual({ [X]: 'retired' });
+  });
+});
+
 describe('the collector must be the account the payment was read with (PRD 9.7)', () => {
   const CASES = [
     {
@@ -457,7 +506,7 @@ describe('the collector must be the account the payment was read with (PRD 9.7)'
         const payment = pay(order, gx, overrides());
 
         const { syncMercadoPagoPayment } = await shopClient.query(SYNC, {
-          orderCode: order.code,
+          externalReference: issuedFor(order).externalReference,
           paymentId: String(payment.id),
         });
 
@@ -490,9 +539,15 @@ describe('the collector must be the account the payment was read with (PRD 9.7)'
         await connections.link(storeA.channelId, gx);
         const order = await checkoutAsGuest(shopClient, storeA, payableA);
         const payment = pay(order, gx, { ...overrides(), status: 'pending' });
+        const warn = vi.spyOn(Logger, 'warn');
 
         expect(await notify(payment, X)).toMatchObject({ outcome: 'pending' });
 
+        // The collector that was observed stays in the log: it is the evidence V19 relies on.
+        expect(warn.mock.calls.map(([message]) => message)).toContainEqual(
+          expect.stringContaining(`${reason} (read with account ${X}, collector_id`),
+        );
+        warn.mockRestore();
         expect(await stateOf(storeA, order.code)).toBe('ArrangingPayment');
         expect((await claims().findOneByOrFail({ mpPaymentId: String(payment.id) })).status).toBe(
           'recorded',

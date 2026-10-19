@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { validatePaymentAgainstOrder } from './payment-validation';
 
-const order = { code: 'ORD-1', totalWithTax: 1999, currencyCode: 'ARS' };
+const order = { externalReference: 'ORD-1', totalWithTax: 1999, currencyCode: 'ARS' };
 const payment = {
   id: 1,
   status: 'approved',

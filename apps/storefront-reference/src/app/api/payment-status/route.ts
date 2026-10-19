@@ -4,18 +4,30 @@ import { getCommerce } from '@/lib/commerce';
 
 const ORDER_CODE = /^[A-Za-z0-9]{4,40}$/;
 const PAYMENT_ID = /^[0-9]{1,20}$/;
+/** Same as the result page: alphabet and length only, never read for meaning. */
+const REFERENCE = /^[A-Za-z0-9_-]{1,120}$/;
 
 /**
  * One check of a payment, for the result page to poll.
  *
- * It asks the server (Vendure) what happened: the order state, and, when a `paymentId` is given,
- * the server's own check of that payment with the store's credentials. The `paymentId` is only a
- * pointer taken from the redirect; nothing coming from the redirect decides the answer.
+ * It asks the server (Vendure) what happened: the order state of the session's own order, and, when
+ * a `paymentId` and the `externalReference` of its preference are given, the server's own check of
+ * that payment with the credentials of the account that issued the preference. Both are only
+ * pointers taken from the redirect, passed on untouched; nothing coming from the redirect decides
+ * the answer, and the order is never read out of the reference.
  */
 export async function GET(request: NextRequest) {
-  const orderCode = request.nextUrl.searchParams.get('order') ?? '';
-  const paymentId = request.nextUrl.searchParams.get('paymentId') ?? undefined;
-  if (!ORDER_CODE.test(orderCode) || (paymentId && !PAYMENT_ID.test(paymentId))) {
+  const params = request.nextUrl.searchParams;
+  const orderCode = params.get('order') ?? undefined;
+  const externalReference = params.get('externalReference') ?? undefined;
+  const paymentId = params.get('paymentId') ?? undefined;
+  const valid =
+    (orderCode === undefined || ORDER_CODE.test(orderCode)) &&
+    (externalReference === undefined || REFERENCE.test(externalReference)) &&
+    (paymentId === undefined || PAYMENT_ID.test(paymentId)) &&
+    // The server needs something to ask about: an order of the session, or a payment to check.
+    (orderCode !== undefined || (externalReference !== undefined && paymentId !== undefined));
+  if (!valid) {
     return NextResponse.json({ error: 'Invalid parameters' }, { status: 400 });
   }
 
@@ -24,6 +36,7 @@ export async function GET(request: NextRequest) {
   try {
     result = await commerce.payment.waitForPayment({
       orderCode,
+      externalReference,
       paymentId,
       timeoutMs: 0,
       syncAfterMs: 0,
@@ -37,7 +50,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(
     {
       state: result.state,
-      orderCode: result.orderCode,
+      orderCode: result.orderCode ?? null,
       total: result.order?.totalWithTax ?? null,
       currency: result.order?.currencyCode ?? null,
     },

@@ -36,6 +36,17 @@ export interface MockPayment {
   collector_id?: number | null;
   /** Any token can read this payment (what a forged `external_reference` would rely on). */
   anyoneCanRead?: boolean;
+  /**
+   * The preference this payment came from. The payment's merchant order answers it as
+   * `preference_id`; undefined or null means the order does not say.
+   */
+  preferenceId?: string | null;
+  /**
+   * The merchant order the payment reports. Defaults to one derived from the payment id whenever
+   * `preferenceId` is given; null leaves the payment without an order (a payment that does not say
+   * which order it belongs to).
+   */
+  order?: { id: number; type: string } | null;
   transaction_amount_refunded?: number;
 }
 
@@ -59,6 +70,10 @@ export class MercadoPagoMock {
   /** Access tokens `/users/me` accepts. */
   validTokens = new Set<string>();
   payments = new Map<number, MockPayment>();
+  /** merchant order id -> the payment it belongs to. */
+  merchantOrders = new Map<number, MockPayment>();
+  /** Status the merchant order endpoint answers with; 200 by default, 503 simulates an outage. */
+  merchantOrderStatus = 200;
   /** When set, refunds are rejected with this message (e.g. the seller has no balance). */
   refundError: string | undefined;
   /** Artificial latency of GET /v1/payments/:id, to prove webhooks are answered before processing. */
@@ -125,6 +140,29 @@ export class MercadoPagoMock {
         }
         return HttpResponse.json(this.publicFields(payment));
       }),
+      http.get(`${API}/merchant_orders/:id`, async ({ request, params }) => {
+        await this.record(request);
+        if (this.merchantOrderStatus !== 200) {
+          return HttpResponse.json(
+            { message: 'down', status: this.merchantOrderStatus },
+            { status: this.merchantOrderStatus },
+          );
+        }
+        const payment = this.merchantOrders.get(Number(params.id));
+        const token = request.headers.get('authorization')?.replace('Bearer ', '');
+        if (!payment || (payment.ownerToken !== token && !payment.anyoneCanRead)) {
+          return HttpResponse.json(
+            { message: 'Merchant order not found', status: 404 },
+            { status: 404 },
+          );
+        }
+        return HttpResponse.json({
+          id: Number(params.id),
+          status: 'opened',
+          ...(payment.preferenceId ? { preference_id: payment.preferenceId } : {}),
+          payments: [{ id: payment.id, status: payment.status }],
+        });
+      }),
       http.put(`${API}/v1/payments/:id`, async ({ request, params }) => {
         const body = await this.record(request);
         const payment = this.payments.get(Number(params.id));
@@ -172,6 +210,8 @@ export class MercadoPagoMock {
     this.refreshGrants.clear();
     this.validTokens.clear();
     this.payments.clear();
+    this.merchantOrders.clear();
+    this.merchantOrderStatus = 200;
     this.refundError = undefined;
     this.paymentLookupDelayMs = 0;
     this.preferenceStatus = 201;
@@ -182,15 +222,28 @@ export class MercadoPagoMock {
   }
 
   addPayment(payment: MockPayment): MockPayment {
+    if (payment.preferenceId && payment.order === undefined) {
+      payment.order = { id: 1_000_000 + payment.id, type: 'mercadopago' };
+    }
     this.payments.set(payment.id, payment);
+    if (payment.order) this.merchantOrders.set(payment.order.id, payment);
     return payment;
   }
 
   private publicFields(payment: MockPayment): Record<string, unknown> {
-    const { ownerToken: _owner, anyoneCanRead: _any, collector_id, ...fields } = payment;
-    return collector_id === undefined || collector_id === null
-      ? fields
-      : { ...fields, collector_id };
+    const {
+      ownerToken: _owner,
+      anyoneCanRead: _any,
+      preferenceId: _preference,
+      order,
+      collector_id,
+      ...fields
+    } = payment;
+    return {
+      ...fields,
+      ...(collector_id === undefined || collector_id === null ? {} : { collector_id }),
+      ...(order ? { order } : {}),
+    };
   }
 
   private async record(request: Request): Promise<Record<string, unknown> | undefined> {

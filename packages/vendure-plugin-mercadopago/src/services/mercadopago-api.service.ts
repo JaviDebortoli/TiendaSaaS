@@ -2,10 +2,12 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   MercadoPagoConfig,
   MercadoPagoError,
+  MerchantOrder,
   Payment,
   PaymentRefund,
   Preference,
 } from 'mercadopago';
+import type { MerchantOrderResponse } from 'mercadopago/dist/clients/merchantOrder/commonTypes';
 import type { PaymentResponse } from 'mercadopago/dist/clients/payment/commonTypes';
 import type { PreferenceRequest } from 'mercadopago/dist/clients/preference/commonTypes';
 import { MERCADOPAGO_API_URL, MP_PLUGIN_OPTIONS } from '../constants';
@@ -51,6 +53,7 @@ export interface PreferenceResult {
 }
 
 export type MercadoPagoPayment = PaymentResponse;
+export type MercadoPagoMerchantOrder = MerchantOrderResponse;
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -79,6 +82,14 @@ export class MercadoPagoApiService {
 
   getPayment(accessToken: string, paymentId: string): Promise<MercadoPagoPayment> {
     return this.call(() => new Payment(this.config(accessToken)).get({ id: paymentId }));
+  }
+
+  /** The merchant order a payment belongs to; its `preference_id` says which preference it came from. */
+  getMerchantOrder(
+    accessToken: string,
+    merchantOrderId: string,
+  ): Promise<MercadoPagoMerchantOrder> {
+    return this.call(() => new MerchantOrder(this.config(accessToken)).get({ merchantOrderId }));
   }
 
   cancelPayment(accessToken: string, paymentId: string): Promise<MercadoPagoPayment> {

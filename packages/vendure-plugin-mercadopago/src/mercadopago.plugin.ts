@@ -14,6 +14,7 @@ import { MercadoPagoAccount } from './entities/mercadopago-account.entity';
 import { MercadoPagoChannelLink } from './entities/mercadopago-channel-link.entity';
 import { MercadoPagoOAuthState } from './entities/mercadopago-oauth-state.entity';
 import { MercadoPagoPaymentClaim } from './entities/mercadopago-payment-claim.entity';
+import { MercadoPagoPreference } from './entities/mercadopago-preference.entity';
 import { SessionOrderByCodeAccessStrategy } from './order-access';
 import { manageMercadoPago } from './permissions';
 import { mercadoPagoConnectedChecker, mercadoPagoHandler } from './payment/mercadopago-handler';
@@ -24,6 +25,7 @@ import { MercadoPagoApiService } from './services/mercadopago-api.service';
 import { MercadoPagoOAuthService } from './services/oauth.service';
 import { MercadoPagoPaymentOperations } from './services/payment-operations.service';
 import { MercadoPagoPaymentProcessor } from './services/payment-processor.service';
+import { MercadoPagoPreferenceRegistry } from './services/preference-registry.service';
 import { MercadoPagoReleaseService } from './services/release.service';
 import { MercadoPagoReviewService } from './services/review.service';
 import { MercadoPagoWebhookService } from './services/webhook.service';
@@ -37,6 +39,7 @@ import { MercadoPagoPluginOptions, resolveOptions, ResolvedMercadoPagoOptions } 
     MercadoPagoChannelLink,
     MercadoPagoOAuthState,
     MercadoPagoPaymentClaim,
+    MercadoPagoPreference,
   ],
   providers: [
     { provide: MP_PLUGIN_OPTIONS, useFactory: () => MercadoPagoPlugin.options },
@@ -48,6 +51,7 @@ import { MercadoPagoPluginOptions, resolveOptions, ResolvedMercadoPagoOptions } 
     MercadoPagoPaymentProcessor,
     MercadoPagoPaymentOperations,
     MercadoPagoReviewService,
+    MercadoPagoPreferenceRegistry,
     MercadoPagoReleaseService,
     MercadoPagoWebhookService,
   ],

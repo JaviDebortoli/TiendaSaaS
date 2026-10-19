@@ -7,12 +7,15 @@ import { MercadoPagoMock, OAuthGrant } from './mp-mock';
 import {
   checkoutAsGuest,
   CheckoutOrder,
+  issuedFor,
   notesOf,
   PayableStore,
   provisionStore,
   readOrder,
+  referenceFields,
   sendWebhook,
   STOREFRONT_URL,
+  useIssuer,
   waitFor,
 } from './shop-helpers';
 import { createMpTestEnvironment, createStore, TestStore } from './test-env';
@@ -56,7 +59,7 @@ function mpPayment(
     status: 'approved',
     transaction_amount: order.totalWithTax / 100,
     currency_id: 'ARS',
-    external_reference: order.code,
+    ...referenceFields(order),
     ownerToken: grant.access_token,
     collector_id: grant.user_id,
     ...overrides,
@@ -92,6 +95,7 @@ const ADD_PAYMENT = gql`
 beforeAll(async () => {
   mp.start();
   await init();
+  useIssuer(server.app);
   connections = server.app.get(MercadoPagoConnectionService);
   webhooks = server.app.get(MercadoPagoWebhookService);
   server.app
@@ -266,7 +270,7 @@ describe('idempotency (PRD 9.7)', () => {
     const order = await checkoutAsGuest(shopClient, store, payable);
     const payment = mpPayment(order);
     const { syncMercadoPagoPayment } = await shopClient.query(SYNC, {
-      orderCode: order.code,
+      externalReference: issuedFor(order).externalReference,
       paymentId: String(payment.id),
     });
     expect(syncMercadoPagoPayment).toMatchObject({
@@ -285,7 +289,7 @@ describe('idempotency (PRD 9.7)', () => {
     await process(payment.id);
 
     const { syncMercadoPagoPayment } = await shopClient.query(SYNC, {
-      orderCode: order.code,
+      externalReference: issuedFor(order).externalReference,
       paymentId: String(payment.id),
     });
 
@@ -570,8 +574,8 @@ async function expireToken() {
 }
 
 const SYNC = gql`
-  mutation ($orderCode: String!, $paymentId: String!) {
-    syncMercadoPagoPayment(orderCode: $orderCode, paymentId: $paymentId) {
+  mutation ($externalReference: String!, $paymentId: String!) {
+    syncMercadoPagoPayment(externalReference: $externalReference, paymentId: $paymentId) {
       __typename
       ... on MercadoPagoPaymentSync {
         outcome

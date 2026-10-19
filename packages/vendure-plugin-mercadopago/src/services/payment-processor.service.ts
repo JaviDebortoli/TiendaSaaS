@@ -17,15 +17,18 @@ import { LessThan } from 'typeorm';
 import { loggerCtx, MERCADOPAGO_HANDLER_CODE } from '../constants';
 import { MercadoPagoAccount } from '../entities/mercadopago-account.entity';
 import { MercadoPagoChannelLink } from '../entities/mercadopago-channel-link.entity';
+import { MercadoPagoPreference } from '../entities/mercadopago-preference.entity';
 import { ClaimStatus, MercadoPagoPaymentClaim } from '../entities/mercadopago-payment-claim.entity';
 import { MercadoPagoAttentionEvent } from '../events';
+import { checkCollector } from '../lib/collector';
 import { isUniqueViolation } from '../lib/db';
 import { runAsSettlement } from '../settlement-scope';
 import { validatePaymentAgainstOrder } from '../lib/payment-validation';
 import { mapPaymentStatus, PaymentOutcome } from '../lib/status';
 import { MercadoPagoConnectionService, MercadoPagoNotConnectedError } from './connection.service';
 import { MercadoPagoPayment } from './mercadopago-api.service';
-import { FoundPayment, MercadoPagoPaymentOperations } from './payment-operations.service';
+import { MercadoPagoPaymentOperations } from './payment-operations.service';
+import { MercadoPagoPreferenceRegistry } from './preference-registry.service';
 import { MercadoPagoReviewService } from './review.service';
 
 export type IgnoredReason =
@@ -34,7 +37,8 @@ export type IgnoredReason =
   | 'payment_not_found'
   | 'order_not_found'
   | 'order_mismatch'
-  | 'not_connected';
+  | 'not_connected'
+  | 'unknown_preference';
 
 export type ProcessResult =
   | { outcome: 'settled'; orderCode: string; orderState: string }
@@ -50,18 +54,22 @@ export type ProcessResult =
 export interface ProcessInput {
   mpPaymentId: string;
   /**
-   * Store known beforehand (sync mutation, `notification_url` with the channel in the path). The
-   * order must belong to it, and only the accounts it has used (`active` or `retired` links) are
-   * tried.
-   */
-  channelId?: ID;
-  /**
-   * `user_id` of the notification. Identifies the account when `channelId` is not known, and
-   * narrows the accounts to try when it is.
+   * `user_id` of the notification. On the application route it names the account whose token reads
+   * the payment (PRD 9.7).
    */
   mpUserId?: string;
-  /** The order the caller expects the payment to belong to (sync mutation). */
-  expectedOrderCode?: string;
+  /** The store whose per-preference route the notification came by (mode `preference`). */
+  channelId?: ID;
+  /**
+   * The registry identifier the per-preference `notification_url` carries. It names the preference,
+   * and with it the account that reads the payment: no account is guessed.
+   */
+  preferenceRef?: string;
+  /**
+   * The whole `external_reference` the caller holds (the sync mutation). Looked up as a whole in the
+   * registry, never parsed.
+   */
+  externalReference?: string;
 }
 
 /** A `processing` claim older than this belongs to a worker that died; it can be taken over. */
@@ -85,6 +93,7 @@ export class MercadoPagoPaymentProcessor {
     private readonly connections: MercadoPagoConnectionService,
     private readonly operations: MercadoPagoPaymentOperations,
     private readonly reviews: MercadoPagoReviewService,
+    private readonly registry: MercadoPagoPreferenceRegistry,
     private readonly orderService: OrderService,
     private readonly paymentMethodService: PaymentMethodService,
     private readonly requestContextService: RequestContextService,
@@ -101,14 +110,16 @@ export class MercadoPagoPaymentProcessor {
       return { outcome: 'ignored', reason: 'payment_not_found' };
     }
 
-    // 1. Which accounts can have collected it?
-    const candidates = await this.candidateAccounts(input);
-    if ('ignored' in candidates) return candidates.ignored;
+    // 1. Which account reads the payment? When the caller holds the preference, the registry says;
+    //    otherwise it is the account the notification names. No account is guessed.
+    const origin = await this.resolveOrigin(input);
+    if ('ignored' in origin) return origin.ignored;
+    const { expected } = origin;
 
-    // 2. Ask Mercado Pago, with the account's token. This is the source of truth.
-    let found: FoundPayment | null;
+    // 2. Ask Mercado Pago, with that account's token. This is the source of truth.
+    let read: { payment: MercadoPagoPayment; account: MercadoPagoAccount } | null;
     try {
-      found = await this.operations.findPayment(candidates.accounts, input.mpPaymentId);
+      read = await this.operations.readPayment(origin.account, input.mpPaymentId);
     } catch (error) {
       if (error instanceof MercadoPagoNotConnectedError) {
         Logger.warn(`Payment ${input.mpPaymentId}: ${error.message}`, loggerCtx);
@@ -116,14 +127,37 @@ export class MercadoPagoPaymentProcessor {
       }
       throw error;
     }
-    if (!found) return { outcome: 'ignored', reason: 'payment_not_found' };
-    const { payment, account } = found;
+    if (!read) return { outcome: 'ignored', reason: 'payment_not_found' };
+    const { payment, account } = read;
 
-    // 3. Which order? Anywhere on the server: the order code is unique, and its channel is the store.
-    const orderCode = payment.external_reference ?? '';
-    const orderChannelId = await this.findOrderChannel(orderCode);
-    if (orderChannelId === undefined) {
-      Logger.warn(`Payment ${input.mpPaymentId}: no order "${orderCode}" in any store.`, loggerCtx);
+    // 3. Which preference, order and store? The whole reference is looked up in the registry.
+    const reference = payment.external_reference ?? '';
+    if (expected && reference !== expected.externalReference) {
+      Logger.warn(
+        `Payment ${input.mpPaymentId} ignored: it carries another reference than the preference it was notified for.`,
+        loggerCtx,
+      );
+      return { outcome: 'ignored', reason: 'order_mismatch' };
+    }
+    const entry =
+      expected ?? (reference ? await this.registry.findByExternalReference(reference) : null);
+
+    let orderChannelId: ID | undefined;
+    let orderCode: string | undefined;
+    if (entry) {
+      orderChannelId = entry.channelId;
+      orderCode = entry.orderCode;
+    } else {
+      // No preference was issued for this reference. Only a reference that is exactly an order code
+      // (the old format) can be matched to an order, so that it is reviewed instead of lost.
+      orderChannelId = await this.findOrderChannel(reference);
+      orderCode = reference;
+    }
+    if (orderChannelId === undefined || !orderCode) {
+      Logger.warn(
+        `Payment ${input.mpPaymentId}: reference "${reference.slice(0, 80)}" is no preference and no order of any store.`,
+        loggerCtx,
+      );
       return { outcome: 'ignored', reason: 'order_not_found' };
     }
     if (input.channelId !== undefined && String(orderChannelId) !== String(input.channelId)) {
@@ -134,9 +168,10 @@ export class MercadoPagoPaymentProcessor {
       return { outcome: 'ignored', reason: 'order_mismatch' };
     }
 
-    // 4. The store must have used the account that collected the payment.
+    // 4. A store that never used the account does not settle anything through it. When a
+    //    preference was issued the question is settled below, with its collector.
     const link = await this.connections.findLink(orderChannelId, account.id);
-    if (!link) {
+    if (!link && !entry) {
       Logger.warn(
         `Payment ${input.mpPaymentId} ignored: store ${orderChannelId} never used account ${account.mpUserId}.`,
         loggerCtx,
@@ -153,25 +188,23 @@ export class MercadoPagoPaymentProcessor {
       );
       return { outcome: 'ignored', reason: 'order_not_found' };
     }
-    if (input.expectedOrderCode && input.expectedOrderCode !== order.code) {
-      return { outcome: 'ignored', reason: 'order_mismatch' };
-    }
 
     const outcome = mapPaymentStatus(payment.status);
     if (outcome !== 'settle') {
-      if (!found.collector.ok) {
-        // Only settling is refused for a collector problem (settle() below). A pending, rejected or
-        // reversed payment is recorded as always, so a chargeback alert is never lost; the log keeps
-        // the evidence V19 needs.
+      // Only settling needs the payment to prove where it comes from (settle() below). A pending,
+      // rejected or reversed payment is recorded as always, so a chargeback alert is never lost.
+      // A collector that is not the account is logged: it is the evidence V19 relies on.
+      const collector = checkCollector(payment, account.mpUserId);
+      if (!collector.ok) {
         Logger.warn(
-          `Payment ${input.mpPaymentId} (${payment.status ?? 'unknown'}): ${found.collector.reason} (read with account ${account.mpUserId}, collector_id ${payment.collector_id ?? 'absent'}).`,
+          `Payment ${input.mpPaymentId} (${payment.status ?? 'unknown'}): ${collector.reason} (read with account ${account.mpUserId}, collector_id ${payment.collector_id ?? 'absent'}).`,
           loggerCtx,
         );
       }
       await this.record(ctx, order, payment, outcome);
       return { outcome, orderCode: order.code, orderState: order.state };
     }
-    return this.settle(ctx, order, found, link);
+    return this.settle(ctx, order, payment, account, entry, link);
   }
 
   /**
@@ -188,9 +221,13 @@ export class MercadoPagoPaymentProcessor {
       throw new UserInputError('The payment was not collected by an account of this store.');
     }
     const { payment, account } = found;
-    const order = payment.external_reference
-      ? await this.orderService.findOneByCode(ctx, payment.external_reference)
-      : undefined;
+    const issued = payment.external_reference
+      ? await this.registry.findByExternalReference(payment.external_reference)
+      : null;
+    const order =
+      issued && String(issued.channelId) === String(ctx.channelId)
+        ? await this.orderService.findOneByCode(ctx, issued.orderCode)
+        : undefined;
     if (!order) throw new UserInputError('The payment does not belong to an order of this store.');
     if (payment.status !== 'pending' && payment.status !== 'in_process') {
       throw new UserInputError(
@@ -211,59 +248,76 @@ export class MercadoPagoPaymentProcessor {
   }
 
   /**
-   * The accounts that may have collected the payment. With a known store, those it sells with or
-   * used to sell with, narrowed to the notification's `user_id` when there is one. Without it, the
-   * account the notification names, which must still hold tokens: with none, the payment cannot be
-   * checked, and the platform is told instead of discarding it silently.
+   * The account whose token reads the payment, and the preference the caller already knows, if any.
+   * - The sync mutation holds the whole `external_reference`, and the per-preference route holds the
+   *   registry identifier: the registry names the preference and its account, so no account is tried
+   *   one by one.
+   * - The application route holds only the `user_id` of the notification.
+   * An account without tokens cannot read anything: the payment cannot be checked, and the platform
+   * is told instead of discarding it silently.
    */
-  private async candidateAccounts(
+  private async resolveOrigin(
     input: ProcessInput,
-  ): Promise<{ accounts: MercadoPagoAccount[] } | { ignored: ProcessResult }> {
-    if (input.channelId !== undefined) {
-      let accounts = await this.connections.accountsForChannel(input.channelId);
-      if (input.mpUserId) {
-        const narrowed = accounts.filter((account) => account.mpUserId === input.mpUserId);
-        if (narrowed.length === 0 && accounts.length > 0) {
-          Logger.warn(
-            `Notification for payment ${input.mpPaymentId} ignored: seller ${input.mpUserId} is not an account of store ${input.channelId}.`,
-            loggerCtx,
-          );
-          return { ignored: { outcome: 'ignored', reason: 'seller_mismatch' } };
-        }
-        accounts = narrowed;
-      }
-      if (accounts.length === 0) {
+  ): Promise<
+    { account: MercadoPagoAccount; expected?: MercadoPagoPreference } | { ignored: ProcessResult }
+  > {
+    if (input.externalReference !== undefined || input.preferenceRef !== undefined) {
+      const expected =
+        input.externalReference !== undefined
+          ? await this.registry.findByExternalReference(input.externalReference)
+          : await this.registry.findByToken(input.preferenceRef!);
+      if (!expected) {
         Logger.warn(
-          `Notification for payment ${input.mpPaymentId} ignored: store ${input.channelId} has no Mercado Pago account.`,
+          `Notification for payment ${input.mpPaymentId} ignored: no preference was issued for it.`,
           loggerCtx,
         );
-        return { ignored: { outcome: 'ignored', reason: 'unknown_seller' } };
+        return { ignored: { outcome: 'ignored', reason: 'unknown_preference' } };
       }
-      return { accounts };
+      if (input.channelId !== undefined && String(expected.channelId) !== String(input.channelId)) {
+        Logger.warn(
+          `Notification for payment ${input.mpPaymentId} ignored: its preference belongs to another store than the route.`,
+          loggerCtx,
+        );
+        return { ignored: { outcome: 'ignored', reason: 'order_mismatch' } };
+      }
+      const readerUserId = expected.account.mpUserId;
+      if (!this.connections.hasTokens(expected.account)) {
+        this.alertUnverifiable(input, readerUserId, true);
+        return { ignored: { outcome: 'ignored', reason: 'not_connected' } };
+      }
+      return { account: expected.account, expected };
     }
 
     const account = input.mpUserId
       ? await this.connections.findAccountByMpUserId(input.mpUserId)
       : null;
     if (!this.connections.hasTokens(account)) {
-      Logger.warn(
-        `Notification for payment ${input.mpPaymentId} ignored: ${account ? 'the account has no tokens left' : 'no account matches the seller'}.`,
-        loggerCtx,
-      );
-      this.eventBus.publish(
-        new MercadoPagoAttentionEvent('unverifiable_payment', null, {
-          mpPaymentId: input.mpPaymentId,
-          mpUserId: input.mpUserId,
-          message: account
-            ? `A notification arrived for payment ${input.mpPaymentId} of account ${input.mpUserId}, which has no tokens left, so it could not be checked.`
-            : `A notification arrived for payment ${input.mpPaymentId} of seller ${input.mpUserId ?? '(unknown)'}, which is not a known account, so it could not be checked.`,
-        }),
-      );
+      this.alertUnverifiable(input, input.mpUserId, !!account);
       return {
         ignored: { outcome: 'ignored', reason: account ? 'not_connected' : 'unknown_seller' },
       };
     }
-    return { accounts: [account] };
+    return { account };
+  }
+
+  private alertUnverifiable(
+    input: ProcessInput,
+    mpUserId: string | undefined,
+    known: boolean,
+  ): void {
+    Logger.warn(
+      `Notification for payment ${input.mpPaymentId} ignored: ${known ? 'the account has no tokens left' : 'no account matches the seller'}.`,
+      loggerCtx,
+    );
+    this.eventBus.publish(
+      new MercadoPagoAttentionEvent('unverifiable_payment', null, {
+        mpPaymentId: input.mpPaymentId,
+        mpUserId,
+        message: known
+          ? `A notification arrived for payment ${input.mpPaymentId} of account ${mpUserId}, which has no tokens left, so it could not be checked.`
+          : `A notification arrived for payment ${input.mpPaymentId} of seller ${mpUserId ?? '(unknown)'}, which is not a known account, so it could not be checked.`,
+      }),
+    );
   }
 
   /** The store (non-default channel) an order belongs to, wherever it was placed. */
@@ -278,10 +332,11 @@ export class MercadoPagoPaymentProcessor {
   private async settle(
     ctx: RequestContext,
     order: Order,
-    found: FoundPayment,
-    link: MercadoPagoChannelLink,
+    payment: MercadoPagoPayment,
+    account: MercadoPagoAccount,
+    entry: MercadoPagoPreference | null,
+    link: MercadoPagoChannelLink | null,
   ): Promise<ProcessResult> {
-    const { payment, account } = found;
     const mpPaymentId = String(payment.id);
     const orderCode = order.code;
     const base = { orderCode, orderState: order.state };
@@ -291,23 +346,25 @@ export class MercadoPagoPaymentProcessor {
       return { outcome: 'already_settled', ...base };
     }
 
-    // The collector must be the account the payment was read with (PRD 9.7). This also stops an
-    // approved payment of another account, with a forged `external_reference`, from settling the
-    // order.
-    if (!found.collector.ok) {
+    // A payment settles an order only if it belongs to a preference the platform issued for it
+    // (PRD 9.7): the reference is registered for this order, the preference's account collected the
+    // payment (DEC-44), and Mercado Pago says the payment came from that very preference. This is
+    // what stops a payment that merely repeats an order's reference from settling it.
+    const issuance = await this.operations.checkIssuance({ payment, account, entry, orderCode });
+    if (!issuance.ok) {
       await this.reviews.markNeedsReview(
         ctx,
         order,
         mpPaymentId,
-        found.collector.reason,
-        account.mpUserId,
-        payment.collector_id,
+        issuance.reason,
+        issuance.detail,
+        issuance.observed,
       );
-      return { outcome: 'needs_review', ...base, reason: found.collector.reason };
+      return { outcome: 'needs_review', ...base, reason: issuance.reason };
     }
 
     const validation = validatePaymentAgainstOrder(payment, {
-      code: order.code,
+      externalReference: entry!.externalReference,
       totalWithTax: order.totalWithTax,
       currencyCode: order.currencyCode,
     });
@@ -370,7 +427,7 @@ export class MercadoPagoPaymentProcessor {
         );
       }
       await this.setClaimStatus(mpPaymentId, 'settled');
-      if (link.status === 'released') {
+      if (link?.status === 'released') {
         // The payment is verified, so it is honoured; but a released link should have no payments
         // left to arrive, so the rule that releases links needs a look.
         this.eventBus.publish(

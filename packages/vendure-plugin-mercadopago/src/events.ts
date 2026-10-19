@@ -15,6 +15,13 @@ export type AttentionReason =
   | 'collector_mismatch'
   /** Approved payment that came without `collector_id`, so its account cannot be confirmed. */
   | 'collector_missing'
+  /**
+   * Approved payment whose reference is not one of the preferences the platform issued for the
+   * order, or whose preference could not be found out (PRD 9.7).
+   */
+  | 'unknown_preference'
+  /** Approved payment that belongs to another preference than the one issued for its reference. */
+  | 'preference_mismatch'
   /** Informational: a retired account was released from the store and can no longer refund (PRD 9.4). */
   | 'link_released'
   /** An approved payment arrived for a released link: it was settled, but the release rule failed. */

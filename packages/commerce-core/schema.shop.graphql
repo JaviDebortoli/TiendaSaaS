@@ -2988,10 +2988,16 @@ type Mutation {
 
   """
   Fallback when the webhook is late: asks Mercado Pago for the state of the payment with the
-  store's token and applies the same rules as the webhook. The payment id is only a pointer; it
-  never confirms anything by itself.
+  token of the account that issued the preference, and applies the same rules as the webhook.
+  externalReference is the reference of the preference, exactly as Mercado Pago returned it
+  (it is looked up whole, never parsed), and paymentId the payment of the redirect. Both are
+  only pointers: they never confirm anything by themselves. An unknown reference answers
+  'unknown' without asking Mercado Pago anything.
   """
-  syncMercadoPagoPayment(orderCode: String!, paymentId: String!): SyncMercadoPagoPaymentResult!
+  syncMercadoPagoPayment(
+    externalReference: String!
+    paymentId: String!
+  ): SyncMercadoPagoPaymentResult!
 
   """
   Transitions an Order to a new state. Valid next states can be found by querying `nextOrderStates`

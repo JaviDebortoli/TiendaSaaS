@@ -12,8 +12,10 @@ export * from './types';
 export { MercadoPagoAccount } from './entities/mercadopago-account.entity';
 export type { AccountStatus } from './entities/mercadopago-account.entity';
 export { MercadoPagoChannelLink } from './entities/mercadopago-channel-link.entity';
+export { MercadoPagoPreference } from './entities/mercadopago-preference.entity';
 export type { LinkStatus } from './entities/mercadopago-channel-link.entity';
 export { MercadoPagoConnectionService } from './services/connection.service';
 // Also brings the typing of the Channel custom field into consumers.
 export { STOREFRONT_URL_FIELD } from './custom-fields';
 export { MercadoPagoReleaseService } from './services/release.service';
+export { MercadoPagoPreferenceRegistry } from './services/preference-registry.service';

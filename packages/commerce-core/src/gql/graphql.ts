@@ -1577,7 +1577,7 @@ export type CreateMercadoPagoCheckoutMutation = {
 };
 
 export type SyncMercadoPagoPaymentMutationVariables = Exact<{
-  orderCode: string;
+  externalReference: string;
   paymentId: string;
 }>;
 
@@ -5090,7 +5090,7 @@ export const SyncMercadoPagoPaymentDocument = {
       variableDefinitions: [
         {
           kind: 'VariableDefinition',
-          variable: { kind: 'Variable', name: { kind: 'Name', value: 'orderCode' } },
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'externalReference' } },
           type: {
             kind: 'NonNullType',
             type: { kind: 'NamedType', name: { kind: 'Name', value: 'String' } },
@@ -5114,8 +5114,8 @@ export const SyncMercadoPagoPaymentDocument = {
             arguments: [
               {
                 kind: 'Argument',
-                name: { kind: 'Name', value: 'orderCode' },
-                value: { kind: 'Variable', name: { kind: 'Name', value: 'orderCode' } },
+                name: { kind: 'Name', value: 'externalReference' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'externalReference' } },
               },
               {
                 kind: 'Argument',

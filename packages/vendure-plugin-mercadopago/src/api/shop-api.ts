@@ -53,10 +53,16 @@ export const shopApiExtensions = gql`
     createMercadoPagoCheckout(input: MercadoPagoCheckoutInput!): CreateMercadoPagoCheckoutResult!
     """
     Fallback when the webhook is late: asks Mercado Pago for the state of the payment with the
-    store's token and applies the same rules as the webhook. The payment id is only a pointer; it
-    never confirms anything by itself.
+    token of the account that issued the preference, and applies the same rules as the webhook.
+    externalReference is the reference of the preference, exactly as Mercado Pago returned it
+    (it is looked up whole, never parsed), and paymentId the payment of the redirect. Both are
+    only pointers: they never confirm anything by themselves. An unknown reference answers
+    'unknown' without asking Mercado Pago anything.
     """
-    syncMercadoPagoPayment(orderCode: String!, paymentId: String!): SyncMercadoPagoPaymentResult!
+    syncMercadoPagoPayment(
+      externalReference: String!
+      paymentId: String!
+    ): SyncMercadoPagoPaymentResult!
   }
 `;
 
@@ -102,15 +108,24 @@ export class MercadoPagoShopResolver {
   @Mutation()
   async syncMercadoPagoPayment(
     @Ctx() ctx: RequestContext,
-    @Args('orderCode') orderCode: string,
+    @Args('externalReference') externalReference: string,
     @Args('paymentId') paymentId: string,
   ) {
     try {
       const result = await this.processor.process({
         mpPaymentId: paymentId,
         channelId: ctx.channelId,
-        expectedOrderCode: orderCode,
+        externalReference,
       });
+      if (result.outcome === 'ignored' && result.reason === 'unknown_preference') {
+        // Nothing was issued under that reference: say "unknown" without revealing anything.
+        return {
+          __typename: 'MercadoPagoPaymentSync',
+          outcome: 'unknown',
+          orderCode: '',
+          orderState: '',
+        };
+      }
       if (result.outcome === 'ignored') {
         return new MercadoPagoError(
           result.reason.toUpperCase(),

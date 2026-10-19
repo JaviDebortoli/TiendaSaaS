@@ -28,12 +28,15 @@ function orderStates(...states: string[]) {
   }));
 }
 
-const sync = (outcome: string) =>
+/** What the redirect brings as `external_reference`: opaque to this package. */
+const REFERENCE = 'ORDER1-AAAAAAAAAAAAAAAAAAAAAA';
+
+const sync = (outcome: string, orderCode = 'ORDER1') =>
   shop.on('SyncMercadoPagoPayment', {
     syncMercadoPagoPayment: {
       __typename: 'MercadoPagoPaymentSync',
       outcome,
-      orderCode: 'ORDER1',
+      orderCode,
       orderState: 'x',
     },
   });
@@ -44,6 +47,7 @@ describe('waitForPayment (PRD 9.6 steps 4-6)', () => {
 
     const result = await payment.waitForPayment({
       orderCode: 'ORDER1',
+      externalReference: REFERENCE,
       paymentId: '99',
       ...fakeClock(),
     });
@@ -57,6 +61,7 @@ describe('waitForPayment (PRD 9.6 steps 4-6)', () => {
 
     const result = await payment.waitForPayment({
       orderCode: 'ORDER1',
+      externalReference: REFERENCE,
       paymentId: '99',
       intervalMs: 1000,
       syncAfterMs: 10_000,
@@ -79,6 +84,7 @@ describe('waitForPayment (PRD 9.6 steps 4-6)', () => {
 
     const result = await payment.waitForPayment({
       orderCode: 'ORDER1',
+      externalReference: REFERENCE,
       paymentId: '99',
       intervalMs: 1000,
       syncAfterMs: 10_000,
@@ -87,7 +93,7 @@ describe('waitForPayment (PRD 9.6 steps 4-6)', () => {
 
     expect(shop.called('SyncMercadoPagoPayment')).toHaveLength(1);
     expect(shop.called('SyncMercadoPagoPayment')[0]!.variables).toEqual({
-      orderCode: 'ORDER1',
+      externalReference: REFERENCE,
       paymentId: '99',
     });
     expect(result.state).toBe('paid');
@@ -99,6 +105,7 @@ describe('waitForPayment (PRD 9.6 steps 4-6)', () => {
 
     const result = await payment.waitForPayment({
       orderCode: 'ORDER1',
+      externalReference: REFERENCE,
       paymentId: '99',
       syncAfterMs: 0,
       ...fakeClock(),
@@ -120,6 +127,21 @@ describe('waitForPayment (PRD 9.6 steps 4-6)', () => {
     expect(shop.called('SyncMercadoPagoPayment')).toHaveLength(0);
   });
 
+  it('does not call sync without the reference of the redirect, because it is what names the preference', async () => {
+    orderStates('ArrangingPayment');
+
+    const result = await payment.waitForPayment({
+      orderCode: 'ORDER1',
+      paymentId: '99',
+      syncAfterMs: 0,
+      timeoutMs: 5000,
+      ...fakeClock(),
+    });
+
+    expect(result.state).toBe('processing');
+    expect(shop.called('SyncMercadoPagoPayment')).toHaveLength(0);
+  });
+
   it('calls sync only once', async () => {
     orderStates('ArrangingPayment');
     shop.on('SyncMercadoPagoPayment', {
@@ -133,6 +155,7 @@ describe('waitForPayment (PRD 9.6 steps 4-6)', () => {
 
     const result = await payment.waitForPayment({
       orderCode: 'ORDER1',
+      externalReference: REFERENCE,
       paymentId: '99',
       syncAfterMs: 2000,
       timeoutMs: 20_000,
@@ -157,6 +180,7 @@ describe('waitForPayment (PRD 9.6 steps 4-6)', () => {
 
       const result = await payment.waitForPayment({
         orderCode: 'ORDER1',
+        externalReference: REFERENCE,
         paymentId: '99',
         syncAfterMs: 3000,
         timeoutMs: 60_000,
@@ -180,6 +204,7 @@ describe('waitForPayment (PRD 9.6 steps 4-6)', () => {
 
     const result = await payment.waitForPayment({
       orderCode: 'ORDER1',
+      externalReference: REFERENCE,
       paymentId: '99',
       syncAfterMs: 1000,
       ...fakeClock(),
@@ -240,6 +265,77 @@ describe('waitForPayment (PRD 9.6 steps 4-6)', () => {
         sleep,
       }),
     ).rejects.toThrow('navigated away');
+  });
+});
+
+describe('waitForPayment without an order of the session', () => {
+  it('reads no order until the server says which one the payment is for, and then reads that one', async () => {
+    sync('settled', 'ORDER9');
+    shop.on('OrderByCode', () => ({ orderByCode: order({ state: 'PaymentSettled' }) }));
+
+    const result = await payment.waitForPayment({
+      externalReference: REFERENCE,
+      paymentId: '99',
+      syncAfterMs: 3000,
+      ...fakeClock(),
+    });
+
+    // Nothing was read while no order was known: the reference is not read for one.
+    expect(shop.called('OrderByCode')).toHaveLength(1);
+    expect(shop.called('OrderByCode')[0]!.variables).toEqual({ code: 'ORDER9' });
+    expect(shop.called('SyncMercadoPagoPayment')).toHaveLength(1);
+    expect(result).toMatchObject({ state: 'paid', orderCode: 'ORDER9' });
+  });
+
+  it('never derives the order from the text of the reference', async () => {
+    sync('unknown', ''); // the server does not know the reference
+    orderStates('PaymentSettled');
+
+    const result = await payment.waitForPayment({
+      externalReference: REFERENCE,
+      paymentId: '99',
+      syncAfterMs: 2000,
+      timeoutMs: 8000,
+      ...fakeClock(),
+    });
+
+    // The reference starts with "ORDER1", but nothing may be asked about that code.
+    expect(shop.called('OrderByCode')).toHaveLength(0);
+    expect(result).toEqual({ state: 'processing', orderCode: undefined, order: null });
+  });
+
+  it('only waits when it has neither an order nor a reference to ask about', async () => {
+    orderStates('PaymentSettled');
+
+    const result = await payment.waitForPayment({ timeoutMs: 4000, ...fakeClock() });
+
+    expect(result).toEqual({ state: 'processing', orderCode: undefined, order: null });
+    expect(shop.called('OrderByCode')).toHaveLength(0);
+    expect(shop.called('SyncMercadoPagoPayment')).toHaveLength(0);
+  });
+
+  it('answers with the verdict of the server even when this session cannot read the order', async () => {
+    sync('needs_review', 'ORDER9');
+    shop.on(
+      'OrderByCode',
+      () =>
+        new Response(
+          JSON.stringify({
+            errors: [{ message: 'not authorized', extensions: { code: 'FORBIDDEN' } }],
+            data: null,
+          }),
+          { headers: { 'content-type': 'application/json' } },
+        ),
+    );
+
+    const result = await payment.waitForPayment({
+      externalReference: REFERENCE,
+      paymentId: '99',
+      syncAfterMs: 0,
+      ...fakeClock(),
+    });
+
+    expect(result).toEqual({ state: 'review', orderCode: 'ORDER9', order: null });
   });
 });
 

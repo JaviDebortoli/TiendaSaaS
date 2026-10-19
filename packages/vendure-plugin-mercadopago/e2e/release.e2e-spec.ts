@@ -9,6 +9,7 @@ import {
   MercadoPagoPlugin,
   MercadoPagoReleaseService,
   RELEASE_TASK_ID,
+  MercadoPagoPreference,
 } from '../src';
 import { accountNotLinkedMessage } from '../src/services/payment-operations.service';
 import { MercadoPagoPaymentProcessor } from '../src/services/payment-processor.service';
@@ -18,7 +19,9 @@ import {
   PayableStore,
   provisionStore,
   readOrder,
+  referenceFields,
   STOREFRONT_URL,
+  useIssuer,
 } from './shop-helpers';
 import {
   asStoreAdmin,
@@ -58,19 +61,27 @@ const grantOf = (userId: number): OAuthGrant => ({
 const repo = <T extends object>(entity: new () => T) =>
   server.app.get(TransactionalConnection).rawConnection.getRepository(entity);
 const accounts = () => repo(MercadoPagoAccount);
+const preferences = () => repo(MercadoPagoPreference);
 const links = () => repo(MercadoPagoChannelLink);
 const payments = () => repo(Payment);
 
 let nextId = 7000;
 /** Sells an order of `store` with `grant`'s account and says it was paid `daysAgo` days ago. */
-async function sale(store: TestStore, payable: PayableStore, grant: OAuthGrant, daysAgo = 0) {
-  const order = await checkoutAsGuest(shopClient, store, payable);
+async function sale(
+  store: TestStore,
+  payable: PayableStore,
+  grant: OAuthGrant,
+  daysAgo = 0,
+  /** An order placed earlier (for example while the store still sold with the account). */
+  placed?: Awaited<ReturnType<typeof checkoutAsGuest>>,
+) {
+  const order = placed ?? (await checkoutAsGuest(shopClient, store, payable));
   const payment = mp.addPayment({
     id: ++nextId,
     status: 'approved',
     transaction_amount: order.totalWithTax / 100,
     currency_id: 'ARS',
-    external_reference: order.code,
+    ...referenceFields(order),
     ownerToken: grant.access_token,
     collector_id: grant.user_id,
   });
@@ -102,6 +113,7 @@ const released = () => events.filter((e) => e.reason === 'link_released');
 beforeAll(async () => {
   mp.start();
   await init();
+  useIssuer(server.app);
   connections = server.app.get(MercadoPagoConnectionService);
   releases = server.app.get(MercadoPagoReleaseService);
   processor = server.app.get(MercadoPagoPaymentProcessor);
@@ -125,6 +137,8 @@ beforeEach(async () => {
   events.length = 0;
   X = ++userCounter;
   gx = grantOf(X);
+  // Preferences point at accounts and links, so they go first.
+  await preferences().createQueryBuilder().delete().execute();
   await links().createQueryBuilder().delete().execute();
   await accounts().createQueryBuilder().delete().execute();
 });
@@ -194,9 +208,11 @@ describe('automatic release of retired links (PRD 9.4)', () => {
 
   it('counts the payments settled after the retirement too', async () => {
     await connections.link(storeA.channelId, gx);
+    const placed = await checkoutAsGuest(shopClient, storeA, payableA);
     await retire(storeA, 200);
-    // A pending payment that was approved after the store retired the account, a week ago.
-    await sale(storeA, payableA, gx, 7);
+    // A pending payment of that order that was approved after the store retired the account, a
+    // week ago.
+    await sale(storeA, payableA, gx, 7, placed);
 
     expect((await releases.releaseDueLinks()).released).toBe(0);
   });

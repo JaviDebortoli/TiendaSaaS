@@ -1,7 +1,100 @@
+import type { INestApplicationContext } from '@nestjs/common';
+import { Order, TransactionalConnection } from '@vendure/core';
 import { SimpleGraphQLClient } from '@vendure/testing';
 import gql from 'graphql-tag';
 import { createHmac } from 'node:crypto';
+import { MercadoPagoConnectionService, MercadoPagoPreferenceRegistry } from '../src';
 import { asSuperAdmin, TestStore } from './test-env';
+
+/** What the platform issued for an order: the reference and the preference id Mercado Pago answered. */
+export interface IssuedPreference {
+  externalReference: string;
+  preferenceId: string;
+  /** The registry identifier: what a per-preference `notification_url` carries as `ref`. */
+  token: string;
+  /** `user_id` of the account the preference was issued with. */
+  accountUserId: string;
+}
+
+const issuedByOrder = new Map<string, IssuedPreference>();
+let issuer: INestApplicationContext | undefined;
+let preferenceCounter = 0;
+
+/**
+ * Makes `checkoutAsGuest` issue a preference for every order it brings to payment, with the
+ * account its store sells with at that moment, as the checkout does (PRD 9.6). A spec calls it once
+ * with `server.app`.
+ */
+export function useIssuer(app: INestApplicationContext): void {
+  issuer = app;
+}
+
+/**
+ * Issues a preference for an order with the account `mpUserId` (the store's active one when
+ * omitted). Written straight to the registry, with a preference id as Mercado Pago would answer.
+ */
+export async function issuePreference(
+  app: INestApplicationContext,
+  order: { id: string | number; code: string; totalWithTax: number },
+  options: { channelId?: string | number; mpUserId?: string } = {},
+): Promise<IssuedPreference> {
+  const connection = app.get(TransactionalConnection);
+  const connections = app.get(MercadoPagoConnectionService);
+  const registry = app.get(MercadoPagoPreferenceRegistry);
+  const channelId =
+    options.channelId ??
+    (
+      await connection.rawConnection
+        .getRepository(Order)
+        .findOneOrFail({ where: { code: order.code }, relations: { channels: true } })
+    ).channels.find((channel) => channel.code !== '__default_channel__')!.id;
+  const link = options.mpUserId
+    ? (await connections.listLinks(channelId)).find((l) => l.account.mpUserId === options.mpUserId)
+    : await connections.findActiveLink(channelId);
+  if (!link) throw new Error(`No link to issue a preference for order ${order.code}.`);
+  const entry = await registry.issue({
+    orderId: Number(String(order.id).replace(/^T_/, '')),
+    orderCode: order.code,
+    channelId,
+    accountId: link.accountId,
+    linkId: link.id,
+    totalWithTax: order.totalWithTax,
+    idempotencyKey: `test-${++preferenceCounter}`,
+  });
+  const preferenceId = `pref-test-${preferenceCounter}`;
+  await registry.setPreferenceId(entry.id, preferenceId);
+  const issued = {
+    externalReference: entry.externalReference,
+    preferenceId,
+    token: entry.token,
+    accountUserId: link.account.mpUserId,
+  };
+  issuedByOrder.set(order.code, issued);
+  return issued;
+}
+
+/** The latest preference issued for an order by `checkoutAsGuest`, or by `issuePreference`. */
+export function issuedFor(order: { code: string }): IssuedPreference {
+  const issued = issuedByOrder.get(order.code);
+  if (!issued) throw new Error(`No preference was issued for order ${order.code}.`);
+  return issued;
+}
+
+/**
+ * The fields of a Mercado Pago payment that say which preference it came from, for the latest
+ * preference issued for the order: what a payment made from that preference carries. For an order
+ * no preference was issued for (its store sold with no account, or the code is invented) it is the
+ * bare order code, the old format, which no payment can settle with.
+ */
+export function referenceFields(order: { code: string }): {
+  external_reference: string;
+  preferenceId?: string;
+} {
+  const issued = issuedByOrder.get(order.code);
+  return issued
+    ? { external_reference: issued.externalReference, preferenceId: issued.preferenceId }
+    : { external_reference: order.code };
+}
 
 export const STOREFRONT_URL = 'https://tienda.example.test';
 
@@ -202,10 +295,15 @@ export async function checkoutAsGuest(
     `mutation ($id: [ID!]!) { setOrderShippingMethod(shippingMethodId: $id) { ${ORDER_FIELDS} } }`,
     { id: [payable.shippingMethodId] },
   );
-  return run<CheckoutOrder>(
+  const order = await run<CheckoutOrder>(
     shopClient,
     `mutation { transitionOrderToState(state: "ArrangingPayment") { ... on Order { id code state totalWithTax } ... on OrderStateTransitionError { errorCode message } } }`,
   );
+  if (issuer) {
+    // The store may not sell with any account yet; then there is nothing to issue.
+    await issuePreference(issuer, order, { channelId: store.channelId }).catch(() => undefined);
+  }
+  return order;
 }
 
 export interface WebhookOptions {

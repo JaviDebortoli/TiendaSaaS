@@ -5,7 +5,12 @@ import { getConfig } from '@/lib/config';
 
 export const metadata = { title: 'Resultado del pago' };
 
-const ORDER_CODE = /^[A-Za-z0-9]{4,40}$/;
+/**
+ * The reference of the preference as it came back. Only its alphabet and length are checked, to
+ * keep junk out of the URL of the status endpoint: its text is never read for an order, a store or
+ * anything else (PRD 9.6). The server looks it up whole.
+ */
+const REFERENCE = /^[A-Za-z0-9_-]{1,120}$/;
 const PAYMENT_ID = /^[0-9]{1,20}$/;
 
 function first(value: string | string[] | undefined): string | undefined {
@@ -15,7 +20,9 @@ function first(value: string | string[] | undefined): string | undefined {
 /**
  * Where Mercado Pago sends the buyer back (PRD 9.6 step 4). The URL carries `payment_id`,
  * `external_reference` and `status`, but **none of it confirms a payment**: `payment_id` and
- * `external_reference` only tell this page *which* order and payment to ask the server about.
+ * `external_reference` only tell the server *which* payment and preference to check. The order this
+ * page shows is the one of the buyer's own session, or the one the server answers with: it is never
+ * read out of the `external_reference`.
  */
 export default async function ResultPage({
   searchParams,
@@ -26,24 +33,18 @@ export default async function ResultPage({
   const reference = first(params.external_reference);
   const paymentId = first(params.payment_id) ?? first(params.collection_id);
 
-  let orderCode = reference && ORDER_CODE.test(reference) ? reference : undefined;
-  if (!orderCode) {
-    // Fall back to the order of this browser session.
-    const commerce = await getCommerce();
-    orderCode = (await commerce.cart.getCart())?.code;
-  }
+  // The order of this browser session, if it still has one. The cart is read, not the URL.
+  const commerce = await getCommerce();
+  const orderCode = (await commerce.cart.getCart())?.code;
 
   return (
     <Page title="Resultado del pago">
-      {orderCode ? (
-        <PaymentStatus
-          orderCode={orderCode}
-          paymentId={paymentId && PAYMENT_ID.test(paymentId) ? paymentId : undefined}
-          syncAfterMs={getConfig().syncAfterMs}
-        />
-      ) : (
-        <p>No encontramos un pedido para mostrar. Si acabás de pagar, revisá tu email.</p>
-      )}
+      <PaymentStatus
+        orderCode={orderCode}
+        externalReference={reference && REFERENCE.test(reference) ? reference : undefined}
+        paymentId={paymentId && PAYMENT_ID.test(paymentId) ? paymentId : undefined}
+        syncAfterMs={getConfig().syncAfterMs}
+      />
     </Page>
   );
 }

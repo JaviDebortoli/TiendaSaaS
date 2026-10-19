@@ -29,8 +29,9 @@ const TEXTS: Record<AttentionReason, { title: string; message: string; action: s
   account_disconnected: {
     title: 'Mercado Pago quedó desconectada',
     message:
-      'Se revocó el acceso de la tienda a la cuenta de Mercado Pago. Mientras tanto, los compradores no pueden pagar con Mercado Pago.',
-    action: 'Entrá al panel, abrí Ajustes › Mercado Pago y volvé a vincular tu cuenta.',
+      'Se revocó el acceso a la cuenta de Mercado Pago de la tienda, y la cuenta quedó retirada de la tienda. Mientras tanto, los compradores no pueden pagar con Mercado Pago.',
+    action:
+      'Para volver a cobrar, entrá al panel, abrí Ajustes › Mercado Pago y vinculá una cuenta (la misma, volviendo a autorizarla, u otra). Mientras la cuenta revocada no vuelva a autorizarse, los reembolsos de sus ventas anteriores hacelos desde el panel de Mercado Pago.',
   },
   amount_mismatch: {
     title: 'Un pago aprobado no coincide con el pedido',
@@ -64,6 +65,20 @@ const TEXTS: Record<AttentionReason, { title: string; message: string; action: s
     action:
       'Revisá el pago en Mercado Pago. Si es legítimo, reembolsalo desde ahí o avisá a la plataforma para resolverlo.',
   },
+  unknown_preference: {
+    title: 'Un pago aprobado no viene de una preferencia emitida para el pedido',
+    message:
+      'Mercado Pago aprobó un pago que no pertenece a ninguna preferencia que la plataforma haya emitido para el pedido (o no se pudo comprobar de cuál viene). Por seguridad no se agregó al pedido.',
+    action:
+      'Revisá el pago en Mercado Pago. Si es legítimo, reembolsalo desde ahí o avisá a la plataforma para resolverlo.',
+  },
+  preference_mismatch: {
+    title: 'Un pago aprobado viene de otra preferencia que la emitida para el pedido',
+    message:
+      'Mercado Pago aprobó un pago que repite la referencia de un pedido pero pertenece a otra preferencia que la que emitió la plataforma. Por seguridad no se agregó al pedido.',
+    action:
+      'Revisá el pago en Mercado Pago. Si es legítimo, reembolsalo desde ahí o avisá a la plataforma para resolverlo.',
+  },
   link_released: {
     title: 'Se liberó una cuenta de Mercado Pago anterior de tu tienda',
     message:
@@ -91,6 +106,8 @@ const PLATFORM_REASONS = new Set<AttentionReason>([
   'account_disconnected',
   'collector_mismatch',
   'collector_missing',
+  'unknown_preference',
+  'preference_mismatch',
   'released_link_payment',
   'unverifiable_payment',
 ]);

@@ -120,7 +120,12 @@ contenedores, `docker compose run --rm release-links`). Las ventanas se cambian 
    y sus contracargos se asignan a A, aunque la cuenta sea la misma.
 
 Mientras la cuenta esté `active` en un local, ningún otro puede vincularla (se rechaza sin cambiar
-nada), tampoco si el titular revocó su acceso: el local que la tiene tiene que desvincularla primero.
+nada). Si el titular **revoca** el acceso desde Mercado Pago y la plataforma lo confirma con Mercado
+Pago, la cuenta queda desconectada y se retira del local: otro local puede vincularla, y el local
+original, volver a autorizarla (si nadie la tomó antes) para reactivar su vínculo. Una renovación que
+falla no es una revocación: la cuenta sigue vinculada y bloqueada para otros hasta que se resuelva.
+Mientras la cuenta revocada no vuelva a autorizarse, los reembolsos de sus ventas se hacen desde el
+panel de Mercado Pago.
 
 ### Herramientas del superadmin
 
@@ -167,7 +172,9 @@ await commerce.checkout.setShippingAddress(address);
 await commerce.checkout.selectShippingMethod(methodId);
 const { redirectUrl } = await commerce.checkout.startPayment(returnUrls, { expectedTotal });
 // ...redirigir al comprador a redirectUrl, y en la página de vuelta:
-const result = await commerce.payment.waitForPayment({ orderCode, paymentId });
+// orderCode: el pedido de la sesión (si hay). externalReference y paymentId: los de la redirección,
+// tal cual llegan. Nunca saques el pedido del texto de externalReference.
+const result = await commerce.payment.waitForPayment({ orderCode, externalReference, paymentId });
 // result.state: 'paid' | 'pending' | 'failed' | 'review' | 'processing'
 ```
 
@@ -178,6 +185,7 @@ Reglas del contrato (el paquete y las pruebas las hacen cumplir):
 | Llamá a la API **desde el servidor** de tu frontend                | Así el navegador nunca ve la sesión y no hace falta CORS |
 | Nunca uses la Admin API ni el token del canal por defecto          | El canal por defecto ve todos los locales                |
 | No confirmes un pago con los parámetros de la redirección          | Solo el servidor, consultando a Mercado Pago, confirma   |
+| Pasá el `external_reference` de la redirección sin leerlo          | No es el código del pedido: el servidor lo busca entero  |
 | Las URLs de retorno van en el dominio configurado del local        | El servidor rechaza cualquier otro origen                |
 | Si necesitás comercio que el paquete no tiene, agregalo al paquete | Un cambio se corrige una sola vez para todos los locales |
 
@@ -225,5 +233,5 @@ Las reglas que no se negocian, y dónde se prueban:
 
 ## Para seguir
 
-- [ ] Registrar la aplicación de Mercado Pago y recorrer [`VERIFICATION.md`](VERIFICATION.md): **V19 primero** (si los identificadores de la cuenta no coinciden hay que rediseñar una regla), y después V1, V2, V6, V7, V12–V18 y V20.
+- [ ] Registrar la aplicación de Mercado Pago y recorrer [`VERIFICATION.md`](VERIFICATION.md): **V19 primero** (si los identificadores de la cuenta no coinciden hay que rediseñar una regla), después **V21 y V22** (de ellos depende que un pago pueda liquidar un pedido) y luego V1, V2, V6, V7, V12–V18, V20 y V23.
 - [ ] Decidir hosting, proveedor S3, SMTP, dominios y titularidad de la aplicación (PRD 16.9): [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).

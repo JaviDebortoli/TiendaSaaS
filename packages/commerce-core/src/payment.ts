@@ -16,12 +16,26 @@ export type PaymentState = 'paid' | 'pending' | 'failed' | 'review' | 'processin
 
 export interface PaymentResult {
   state: PaymentState;
-  orderCode: string;
+  /**
+   * The order the answer is about: the one given, or the one the server resolved when it checked the
+   * payment. Undefined while nothing identifies an order.
+   */
+  orderCode?: string;
   order: Cart | null;
 }
 
 export interface WaitForPaymentOptions {
-  orderCode: string;
+  /**
+   * The order of this session, to read its state. Without it nothing is read until the server
+   * says which order the payment is for. Never derive it from `externalReference`.
+   */
+  orderCode?: string;
+  /**
+   * The `external_reference` of the redirect, exactly as it arrived. It is only a pointer for the
+   * fallback below, looked up whole by the server: it is never parsed, split or read here, and it
+   * never confirms anything by itself.
+   */
+  externalReference?: string;
   /**
    * The `payment_id` of the redirect. It is only a pointer for the fallback below: it never
    * confirms anything by itself.
@@ -31,7 +45,10 @@ export interface WaitForPaymentOptions {
   timeoutMs?: number;
   /** Time between checks. Default 1 s. */
   intervalMs?: number;
-  /** If the order is still unpaid after this long, ask the server to check the payment. Default 10 s (PRD 9.6). */
+  /**
+   * If the order is still unpaid after this long, ask the server to check the payment. It needs
+   * both `externalReference` and `paymentId`. Default 10 s (PRD 9.6).
+   */
   syncAfterMs?: number;
   signal?: AbortSignal;
   /** Injected in tests. */
@@ -91,14 +108,14 @@ function stateFromSync(outcome: string): PaymentState | undefined {
  *
  * **The parameters Mercado Pago puts in the redirect are never used to decide anything.** The
  * order is read from the server until it is settled. If the webhook is late, after `syncAfterMs`
- * the server is asked to check the payment itself with the store's own credentials, and its
- * answer is what counts.
+ * the server is asked to check the payment itself with the credentials of the account that issued
+ * the preference, and its answer is what counts, including which order the payment is for.
  */
 export function createPayment(transport: Transport) {
   return {
     async waitForPayment(options: WaitForPaymentOptions): Promise<PaymentResult> {
       const {
-        orderCode,
+        externalReference,
         paymentId,
         timeoutMs = 30_000,
         intervalMs = 1_000,
@@ -107,24 +124,27 @@ export function createPayment(transport: Transport) {
         now = Date.now,
         sleep = defaultSleep,
       } = options;
+      let orderCode = options.orderCode;
       const started = now();
       let synced = false;
       let order: Cart | null;
 
       for (;;) {
-        order = await readOrder(transport, orderCode);
+        order = orderCode ? await readOrder(transport, orderCode) : null;
         if (isPaidState(order?.state)) return { state: 'paid', orderCode, order };
 
         const elapsed = now() - started;
-        if (paymentId && !synced && elapsed >= syncAfterMs) {
+        if (paymentId && externalReference && !synced && elapsed >= syncAfterMs) {
           synced = true;
-          const verdict = await syncPayment(transport, orderCode, paymentId);
-          if (verdict) {
-            if (verdict === 'paid') {
-              order = await readOrder(transport, orderCode);
+          const verdict = await syncPayment(transport, externalReference, paymentId);
+          // The server resolved the order from the preference it issued: that is the order to read.
+          orderCode ??= verdict.orderCode;
+          if (verdict.state) {
+            if (orderCode) order = await readOrder(transport, orderCode);
+            if (verdict.state === 'paid') {
               return { state: isPaidState(order?.state) ? 'paid' : 'processing', orderCode, order };
             }
-            return { state: verdict, orderCode, order };
+            return { state: verdict.state, orderCode, order };
           }
         }
 
@@ -134,11 +154,15 @@ export function createPayment(transport: Transport) {
     },
 
     /**
-     * Asks the server to check one payment now. Returns the order state after the check.
-     * Mostly for custom flows; `waitForPayment` calls it when needed.
+     * Asks the server to check one payment now, by the reference of its preference. Returns the
+     * verdict, if the server gave one. Mostly for custom flows; `waitForPayment` calls it when
+     * needed.
      */
-    async syncPayment(orderCode: string, paymentId: string): Promise<PaymentState | undefined> {
-      return syncPayment(transport, orderCode, paymentId);
+    async syncPayment(
+      externalReference: string,
+      paymentId: string,
+    ): Promise<PaymentState | undefined> {
+      return (await syncPayment(transport, externalReference, paymentId)).state;
     },
   };
 }
@@ -159,23 +183,29 @@ async function readOrder(transport: Transport, orderCode: string): Promise<Cart 
   }
 }
 
-/** The server's verdict, or `undefined` when it could not give one (try again later). */
+/**
+ * The server's verdict on the payment, and the order it resolved from the preference. Both are
+ * undefined when it could not give one (try again later) or did not know the reference.
+ */
 async function syncPayment(
   transport: Transport,
-  orderCode: string,
+  externalReference: string,
   paymentId: string,
-): Promise<PaymentState | undefined> {
+): Promise<{ state: PaymentState | undefined; orderCode: string | undefined }> {
   try {
     const { syncMercadoPagoPayment } = await transport.request(SyncMercadoPagoPaymentMutation, {
-      orderCode,
+      externalReference,
       paymentId,
     });
     if (syncMercadoPagoPayment.__typename === 'MercadoPagoPaymentSync') {
-      return stateFromSync(syncMercadoPagoPayment.outcome);
+      return {
+        state: stateFromSync(syncMercadoPagoPayment.outcome),
+        orderCode: syncMercadoPagoPayment.orderCode || undefined,
+      };
     }
-    return undefined;
+    return { state: undefined, orderCode: undefined };
   } catch (error) {
-    if (error instanceof CommerceError) return undefined;
+    if (error instanceof CommerceError) return { state: undefined, orderCode: undefined };
     throw error;
   }
 }

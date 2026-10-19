@@ -10,7 +10,9 @@ import {
   PayableStore,
   provisionStore,
   readOrder,
+  referenceFields,
   STOREFRONT_URL,
+  useIssuer,
 } from './shop-helpers';
 import { createMpTestEnvironment, createStore, postgresAvailable, TestStore } from './test-env';
 
@@ -53,7 +55,7 @@ suite('concurrency on PostgreSQL (PRD 12, 16.7)', () => {
       status: 'approved',
       transaction_amount: order.totalWithTax / 100,
       currency_id: 'ARS',
-      external_reference: order.code,
+      ...referenceFields(order),
       ownerToken: grant.access_token,
       collector_id: grant.user_id,
     });
@@ -63,6 +65,7 @@ suite('concurrency on PostgreSQL (PRD 12, 16.7)', () => {
   beforeAll(async () => {
     mp.start();
     await init();
+    useIssuer(server.app);
     connections = server.app.get(MercadoPagoConnectionService);
     processor = server.app.get(MercadoPagoPaymentProcessor);
     server.app
@@ -123,7 +126,7 @@ suite('concurrency on PostgreSQL (PRD 12, 16.7)', () => {
       processor.process({
         mpPaymentId: String(approved.id),
         channelId: store.channelId,
-        expectedOrderCode: order.code,
+        externalReference: approved.external_reference,
       }),
       process(approved.id),
     ]);
