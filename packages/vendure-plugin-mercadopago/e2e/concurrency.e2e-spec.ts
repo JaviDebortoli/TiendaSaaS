@@ -55,6 +55,7 @@ suite('concurrency on PostgreSQL (PRD 12, 16.7)', () => {
       currency_id: 'ARS',
       external_reference: order.code,
       ownerToken: grant.access_token,
+      collector_id: grant.user_id,
     });
   const process = (id: number) =>
     processor.process({ mpPaymentId: String(id), mpUserId: String(SELLER) });
@@ -147,12 +148,13 @@ suite('concurrency on PostgreSQL (PRD 12, 16.7)', () => {
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
     expect(rejected.reason).toBeInstanceOf(AccountAlreadyLinkedError);
-    const rows = await server.app
+    const active = await server.app
       .get(TransactionalConnection)
-      .rawConnection.query('SELECT "mpUserId" FROM mercado_pago_connection WHERE "mpUserId" = $1', [
-        '9002',
-      ]);
-    expect(rows).toHaveLength(1);
+      .rawConnection.query(
+        `SELECT l.id FROM mercado_pago_channel_link l JOIN mercado_pago_account a ON a.id = l."accountId" WHERE a."mpUserId" = $1 AND l.status = 'active'`,
+        ['9002'],
+      );
+    expect(active).toHaveLength(1);
     // Put the store back on its original account for any later test.
     await connections.link(store.channelId, grant);
   });

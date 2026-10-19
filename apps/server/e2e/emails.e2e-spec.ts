@@ -356,7 +356,10 @@ describe('attention emails (PRD 9.4, 9.8)', () => {
       scope: 'offline_access',
     });
 
-    await connections.markDisconnected(bookshop.channelId as number, 'revoked');
+    await connections.markDisconnected(
+      (await connections.findActiveAccount(bookshop.channelId as number))!.id,
+      'revoked',
+    );
 
     const mail = await emailWhere(
       (e) =>
@@ -365,6 +368,57 @@ describe('attention emails (PRD 9.4, 9.8)', () => {
     );
     expect(mail.bcc).toContain('ops@plataforma.test');
     expect(mail.body).toContain('Ajustes');
+  });
+
+  it('tell the store and the platform when Mercado Pago does not confirm who collected a payment', async () => {
+    await publish(
+      new MercadoPagoAttentionEvent('collector_mismatch', bakery.channelId, {
+        orderCode: 'ORDEN-88',
+        mpPaymentId: '555002',
+        mpUserId: '1234',
+      }),
+    );
+
+    const mail = await emailWhere((e) => e.body.includes('555002'));
+
+    expect(mail.recipient).toBe(bakery.ownerEmail);
+    expect(mail.bcc).toContain('ops@plataforma.test');
+    expect(mail.subject).toBe(
+      'Atención en Panadería Don Juan: Un pago aprobado no se pudo asignar a la cuenta que lo cobró',
+    );
+  });
+
+  it('tell only the store when an old account is released: it is information, not a problem', async () => {
+    await publish(
+      new MercadoPagoAttentionEvent('link_released', bakery.channelId, {
+        mpUserId: '987654',
+        message: 'released 987654',
+      }),
+    );
+
+    const mail = await emailWhere((e) => e.body.includes('987654'));
+
+    expect(mail.recipient).toBe(bakery.ownerEmail);
+    expect(mail.bcc).toBeUndefined();
+    expect(mail.subject).toContain('Se liberó una cuenta de Mercado Pago anterior');
+  });
+
+  it('tell only the platform about a notification no store can be told about', async () => {
+    await publish(
+      new MercadoPagoAttentionEvent('unverifiable_payment', null, {
+        mpPaymentId: '555003',
+        mpUserId: '424242',
+        message: 'no account',
+      }),
+    );
+
+    const mail = await emailWhere((e) => e.body.includes('555003'));
+
+    expect(mail.recipient).toContain('ops@plataforma.test');
+    expect(mail.recipient).not.toContain(bakery.ownerEmail);
+    expect(mail.subject).toBe(
+      'Atención en La Plataforma: No se pudo verificar una notificación de Mercado Pago',
+    );
   });
 });
 

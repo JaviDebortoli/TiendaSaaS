@@ -10,7 +10,8 @@ import {
 import { MercadoPagoWebhookController } from './api/webhook.controller';
 import { MP_PLUGIN_OPTIONS } from './constants';
 import { channelCustomFields } from './custom-fields';
-import { MercadoPagoConnection } from './entities/mercadopago-connection.entity';
+import { MercadoPagoAccount } from './entities/mercadopago-account.entity';
+import { MercadoPagoChannelLink } from './entities/mercadopago-channel-link.entity';
 import { MercadoPagoOAuthState } from './entities/mercadopago-oauth-state.entity';
 import { MercadoPagoPaymentClaim } from './entities/mercadopago-payment-claim.entity';
 import { SessionOrderByCodeAccessStrategy } from './order-access';
@@ -23,13 +24,19 @@ import { MercadoPagoApiService } from './services/mercadopago-api.service';
 import { MercadoPagoOAuthService } from './services/oauth.service';
 import { MercadoPagoPaymentOperations } from './services/payment-operations.service';
 import { MercadoPagoPaymentProcessor } from './services/payment-processor.service';
+import { MercadoPagoReviewService } from './services/review.service';
 import { MercadoPagoWebhookService } from './services/webhook.service';
 import { refreshConnectionsTask } from './tasks';
 import { MercadoPagoPluginOptions, resolveOptions, ResolvedMercadoPagoOptions } from './types';
 
 @VendurePlugin({
   imports: [PluginCommonModule],
-  entities: [MercadoPagoConnection, MercadoPagoOAuthState, MercadoPagoPaymentClaim],
+  entities: [
+    MercadoPagoAccount,
+    MercadoPagoChannelLink,
+    MercadoPagoOAuthState,
+    MercadoPagoPaymentClaim,
+  ],
   providers: [
     { provide: MP_PLUGIN_OPTIONS, useFactory: () => MercadoPagoPlugin.options },
     MercadoPagoCipherService,
@@ -39,6 +46,7 @@ import { MercadoPagoPluginOptions, resolveOptions, ResolvedMercadoPagoOptions } 
     MercadoPagoCheckoutService,
     MercadoPagoPaymentProcessor,
     MercadoPagoPaymentOperations,
+    MercadoPagoReviewService,
     MercadoPagoWebhookService,
   ],
   controllers: [MercadoPagoOAuthController, MercadoPagoWebhookController],

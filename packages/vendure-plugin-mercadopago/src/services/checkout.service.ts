@@ -104,8 +104,11 @@ export class MercadoPagoCheckoutService {
     this.assertBackUrls(ctx.channel, urls);
 
     let accessToken: string;
+    let mpUserId: string;
     try {
-      ({ accessToken } = await this.connections.getAccessToken(ctx.channelId));
+      const token = await this.connections.getAccessToken(ctx.channelId);
+      accessToken = token.accessToken;
+      mpUserId = token.account.mpUserId;
     } catch (error) {
       if (error instanceof MercadoPagoNotConnectedError) {
         throw new CheckoutError('NOT_CONNECTED', 'This store cannot take payments right now.');
@@ -133,7 +136,18 @@ export class MercadoPagoCheckoutService {
         : {}),
     };
     const idempotencyKey = createHash('sha256')
-      .update(JSON.stringify([ctx.channelId, order.code, order.totalWithTax, urls, windowStart]))
+      // The account is part of the key: a store that changes account inside the window must not
+      // reuse a key Mercado Pago may have bound to the previous token.
+      .update(
+        JSON.stringify([
+          ctx.channelId,
+          mpUserId,
+          order.code,
+          order.totalWithTax,
+          urls,
+          windowStart,
+        ]),
+      )
       .digest('hex');
 
     try {

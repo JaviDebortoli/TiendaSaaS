@@ -29,6 +29,13 @@ export interface MockPayment {
   external_reference: string;
   /** Access token of the seller who owns the payment. Other tokens get a 404, like the real API. */
   ownerToken: string;
+  /**
+   * `collector_id` the API reports: the seller account that collected the payment. Omitted from the
+   * response when undefined or null, like a payment that does not say who collected it.
+   */
+  collector_id?: number | null;
+  /** Any token can read this payment (what a forged `external_reference` would rely on). */
+  anyoneCanRead?: boolean;
   transaction_amount_refunded?: number;
 }
 
@@ -113,19 +120,17 @@ export class MercadoPagoMock {
           await new Promise((r) => setTimeout(r, this.paymentLookupDelayMs));
         const payment = this.payments.get(Number(params.id));
         const token = request.headers.get('authorization')?.replace('Bearer ', '');
-        if (!payment || payment.ownerToken !== token) {
+        if (!payment || (payment.ownerToken !== token && !payment.anyoneCanRead)) {
           return HttpResponse.json({ message: 'Payment not found', status: 404 }, { status: 404 });
         }
-        const { ownerToken: _owner, ...publicFields } = payment;
-        return HttpResponse.json(publicFields);
+        return HttpResponse.json(this.publicFields(payment));
       }),
       http.put(`${API}/v1/payments/:id`, async ({ request, params }) => {
         const body = await this.record(request);
         const payment = this.payments.get(Number(params.id));
         if (!payment) return HttpResponse.json({ message: 'Payment not found' }, { status: 404 });
         if (body?.status === 'cancelled') payment.status = 'cancelled';
-        const { ownerToken: _owner, ...publicFields } = payment;
-        return HttpResponse.json(publicFields);
+        return HttpResponse.json(this.publicFields(payment));
       }),
       http.post(`${API}/v1/payments/:id/refunds`, async ({ request, params }) => {
         const body = await this.record(request);
@@ -179,6 +184,13 @@ export class MercadoPagoMock {
   addPayment(payment: MockPayment): MockPayment {
     this.payments.set(payment.id, payment);
     return payment;
+  }
+
+  private publicFields(payment: MockPayment): Record<string, unknown> {
+    const { ownerToken: _owner, anyoneCanRead: _any, collector_id, ...fields } = payment;
+    return collector_id === undefined || collector_id === null
+      ? fields
+      : { ...fields, collector_id };
   }
 
   private async record(request: Request): Promise<Record<string, unknown> | undefined> {

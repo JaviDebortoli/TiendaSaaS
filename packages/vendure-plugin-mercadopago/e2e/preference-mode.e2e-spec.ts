@@ -49,6 +49,7 @@ const payment = (order: { code: string; totalWithTax: number }) =>
     currency_id: 'ARS',
     external_reference: order.code,
     ownerToken: grant.access_token,
+    collector_id: grant.user_id,
   });
 
 const post = (path: string, query: Record<string, string>, body: unknown = {}) =>
@@ -231,5 +232,84 @@ describe('allowInsecureReturnUrls (tests and local demos only)', () => {
     expect(await create(order.code, 'https://evil.example.test/result')).toMatchObject({
       reason: 'INVALID_BACK_URL',
     });
+  });
+});
+
+describe('webhookMode "preference" with several accounts (PRD 9.7)', () => {
+  let changed: TestStore;
+  let changedPayable: PayableStore;
+  let other: TestStore;
+  let otherPayable: PayableStore;
+  const OLD = 9104;
+  const NEW = 9105;
+  const grantOf = (userId: number): OAuthGrant => ({
+    ...grant,
+    access_token: `APP_USR-pref-${userId}`,
+    refresh_token: `TG-pref-${userId}`,
+    user_id: userId,
+  });
+  const forAccount = (
+    order: { code: string; totalWithTax: number },
+    accountGrant: OAuthGrant,
+    overrides = {},
+  ) =>
+    mp.addPayment({
+      id: ++nextId,
+      status: 'approved',
+      transaction_amount: order.totalWithTax / 100,
+      currency_id: 'ARS',
+      external_reference: order.code,
+      ownerToken: accountGrant.access_token,
+      collector_id: accountGrant.user_id,
+      ...overrides,
+    });
+
+  beforeAll(async () => {
+    changed = await createStore(adminClient, 'pm-change', { storefrontUrl: STOREFRONT_URL });
+    changedPayable = await provisionStore(adminClient, changed);
+    other = await createStore(adminClient, 'pm-other', { storefrontUrl: STOREFRONT_URL });
+    otherPayable = await provisionStore(adminClient, other);
+    await connections.link(changed.channelId, grantOf(OLD));
+    await connections.link(changed.channelId, grantOf(NEW)); // OLD is retired
+    await connections.link(other.channelId, grantOf(9106));
+  }, 60_000);
+
+  it('settles a payment of the account the store retired, on the route of the store', async () => {
+    const order = await checkoutAsGuest(shopClient, changed, changedPayable);
+    const approved = forAccount(order, grantOf(OLD));
+
+    const response = await post('/mercadopago/webhook/pm-change-token', {
+      topic: 'payment',
+      id: String(approved.id),
+    });
+
+    expect(response.status).toBe(200);
+    const settled = await waitFor(
+      () => readOrder(adminClient, changed, order.code),
+      (o) => o.state === 'PaymentSettled',
+    );
+    expect(settled.payments).toHaveLength(1);
+    // The account the store sells with answered 404 first; the retired one saw the payment.
+    const tokens = mp.requestsTo('GET', `/v1/payments/${approved.id}`).map((r) => r.authorization);
+    expect(tokens.slice(0, 2)).toEqual([
+      `Bearer APP_USR-pref-${NEW}`,
+      `Bearer APP_USR-pref-${OLD}`,
+    ]);
+  });
+
+  it('ignores a notification whose order belongs to another store than the one of the route', async () => {
+    const orderOfOther = await checkoutAsGuest(shopClient, other, otherPayable);
+    // A payment collected by the account of "pm-change", pointing at an order of "pm-other".
+    const approved = forAccount(orderOfOther, grantOf(NEW));
+
+    const response = await post('/mercadopago/webhook/pm-change-token', {
+      topic: 'payment',
+      id: String(approved.id),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    expect(response.status).toBe(200);
+    expect((await readOrder(adminClient, other, orderOfOther.code)).state).toBe('ArrangingPayment');
+    expect(mp.requestsTo('GET', `/v1/payments/${approved.id}`).length).toBeGreaterThan(0);
   });
 });

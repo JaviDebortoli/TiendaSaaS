@@ -3,9 +3,16 @@ import { createHash } from 'node:crypto';
 import { MERCADOPAGO_HANDLER_CODE } from '../constants';
 import { MercadoPagoConnectionService } from '../services/connection.service';
 import { MercadoPagoPaymentOperations } from '../services/payment-operations.service';
+import { isSettling } from '../settlement-scope';
 
 let operations: MercadoPagoPaymentOperations;
 let connections: MercadoPagoConnectionService;
+
+/** `user_id` of the account that collected a payment, as stamped when it settled. */
+function accountOf(payment: { metadata: unknown }): string | undefined {
+  const value = (payment.metadata as { mpAccountUserId?: unknown } | undefined)?.mpAccountUserId;
+  return typeof value === 'string' && value !== '' ? value : undefined;
+}
 
 /**
  * Hosted payment page pattern (PRD 9.5): the buyer pays on Mercado Pago, so by the time Vendure
@@ -43,6 +50,10 @@ export const mercadoPagoHandler = new PaymentMethodHandler({
         public: { mpPaymentId },
         mpStatus: verification.payment.status,
         mpStatusDetail: verification.payment.status_detail,
+        // The account whose token read the payment: the one that refunds and cancels it later.
+        mpAccountUserId: verification.account.mpUserId,
+        // Mercado Pago's own word for who collected it, kept as evidence.
+        mpCollectorId: verification.payment.collector_id,
       },
     };
   },
@@ -53,7 +64,7 @@ export const mercadoPagoHandler = new PaymentMethodHandler({
   },
 
   async cancelPayment(ctx, _order, payment) {
-    const result = await operations.cancel(ctx, payment.transactionId);
+    const result = await operations.cancel(ctx, payment.transactionId, accountOf(payment));
     return result.ok
       ? { success: true }
       : {
@@ -73,6 +84,7 @@ export const mercadoPagoHandler = new PaymentMethodHandler({
     const result = await operations.refund(
       ctx,
       payment.transactionId,
+      accountOf(payment),
       amount,
       payment.amount,
       idempotencyKey,
@@ -84,8 +96,8 @@ export const mercadoPagoHandler = new PaymentMethodHandler({
 });
 
 /**
- * A channel can only offer Mercado Pago while its account is linked and its token has not
- * expired (PRD 9.4).
+ * A channel can only offer Mercado Pago while it sells with an account whose token has not
+ * expired (PRD 9.4): an `active` link to an account that is not revoked.
  */
 export const mercadoPagoConnectedChecker = new PaymentMethodEligibilityChecker({
   code: 'mercado-pago-connected',
@@ -96,7 +108,10 @@ export const mercadoPagoConnectedChecker = new PaymentMethodEligibilityChecker({
   init(injector) {
     connections = injector.get(MercadoPagoConnectionService);
   },
-  async check(ctx) {
-    return connections.isUsable(await connections.findByChannelId(ctx.channelId));
+  async check(ctx, order) {
+    // A payment Mercado Pago already approved is applied to its order even if the store has
+    // unlinked or changed account since (settlement-scope.ts).
+    if (isSettling(order.id)) return true;
+    return connections.isChannelUsable(ctx.channelId);
   },
 });

@@ -39,6 +39,7 @@ function approvedPayment(order: { code: string; totalWithTax: number }) {
     currency_id: 'ARS',
     external_reference: order.code,
     ownerToken: grant.access_token,
+    collector_id: grant.user_id,
   });
 }
 
@@ -210,7 +211,7 @@ describe('mp-connect (PRD 9.4)', () => {
     await settleQueue();
 
     expect(response.status).toBe(200);
-    expect((await connections.findByChannelId(store.channelId))!.status).toBe('connected');
+    expect((await connections.findAccountByMpUserId(String(SELLER)))!.status).toBe('connected');
   });
 
   it('marks the store disconnected when the owner revoked access, and stops offering payments', async () => {
@@ -231,11 +232,12 @@ describe('mp-connect (PRD 9.4)', () => {
     expect(response.status).toBe(200);
 
     const row = await waitFor(
-      () => connections.findByChannelId(revokedStore.channelId),
+      () => connections.findAccountByMpUserId(String(revokedSeller)),
       (r) => r?.status === 'disconnected',
     );
     expect(connections.isUsable(row)).toBe(false);
+    expect(await connections.isChannelUsable(revokedStore.channelId)).toBe(false);
     // The other store is not affected.
-    expect((await connections.findByChannelId(store.channelId))!.status).toBe('connected');
+    expect((await connections.findAccountByMpUserId(String(SELLER)))!.status).toBe('connected');
   });
 });

@@ -2,7 +2,7 @@ import { TransactionalConnection } from '@vendure/core';
 import gql from 'graphql-tag';
 import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { MercadoPagoConnection } from '../src';
+import { MercadoPagoAccount, MercadoPagoChannelLink } from '../src';
 import { MercadoPagoMock } from './mp-mock';
 import {
   asStoreAdmin,
@@ -65,8 +65,19 @@ async function callback(params: Record<string, string>) {
   return { status: response.status, location, headers: response.headers };
 }
 
-const rows = () =>
-  server.app.get(TransactionalConnection).rawConnection.getRepository(MercadoPagoConnection);
+const accounts = () =>
+  server.app.get(TransactionalConnection).rawConnection.getRepository(MercadoPagoAccount);
+const links = () =>
+  server.app.get(TransactionalConnection).rawConnection.getRepository(MercadoPagoChannelLink);
+
+/** The account a store sells with today (its `active` link), or null. */
+async function activeAccount(store: TestStore) {
+  const link = await links().findOne({
+    where: { channelId: store.channelId, status: 'active' },
+    relations: { account: true },
+  });
+  return link?.account ?? null;
+}
 
 beforeAll(async () => {
   mp.start();
@@ -129,7 +140,7 @@ describe('Mercado Pago OAuth linking (PRD 9.2)', () => {
       url.searchParams.get('code_challenge'),
     );
 
-    const row = (await rows().findOneBy({ channelId: storeA.channelId }))!;
+    const row = (await activeAccount(storeA))!;
     expect(row.mpUserId).toBe('111');
     expect(row.status).toBe('connected');
     expect(row.accessToken).not.toContain(tokens.access_token);
@@ -175,11 +186,11 @@ describe('Mercado Pago OAuth linking (PRD 9.2)', () => {
 
     expect(denied.location.searchParams.get('reason')).toBe('access_denied');
     expect(mp.requests).toHaveLength(0);
-    expect(await rows().findOneBy({ channelId: storeB.channelId })).toBeNull();
+    expect(await activeAccount(storeB)).toBeNull();
   });
 
   it('rejects an account that is already linked to another store without touching the existing link', async () => {
-    const before = (await rows().findOneBy({ channelId: storeA.channelId }))!;
+    const before = (await activeAccount(storeA))!;
     const { state } = await startFlow(storeB);
     mp.grants.set('code-b', grant(111));
 
@@ -187,23 +198,23 @@ describe('Mercado Pago OAuth linking (PRD 9.2)', () => {
 
     expect(result.location.searchParams.get('mp')).toBe('error');
     expect(result.location.searchParams.get('reason')).toBe('account_already_linked');
-    expect(await rows().findOneBy({ channelId: storeB.channelId })).toBeNull();
-    const after = (await rows().findOneBy({ channelId: storeA.channelId }))!;
+    expect(await activeAccount(storeB)).toBeNull();
+    const after = (await activeAccount(storeA))!;
     expect(after.accessToken).toBe(before.accessToken);
     expect(after.refreshToken).toBe(before.refreshToken);
     expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
   });
 
   it('treats the same account on the same store as a reconnection and updates its tokens', async () => {
-    const before = (await rows().findOneBy({ channelId: storeA.channelId }))!;
+    const before = (await activeAccount(storeA))!;
     const { state } = await startFlow(storeA);
     mp.grants.set('code-a2', grant(111));
 
     const result = await callback({ code: 'code-a2', state });
 
     expect(result.location.searchParams.get('mp')).toBe('connected');
-    expect(await rows().count({ where: { mpUserId: '111' } })).toBe(1);
-    const after = (await rows().findOneBy({ channelId: storeA.channelId }))!;
+    expect(await accounts().count({ where: { mpUserId: '111' } })).toBe(1);
+    const after = (await activeAccount(storeA))!;
     expect(after.id).toBe(before.id);
     expect(after.accessToken).not.toBe(before.accessToken);
   });
@@ -215,32 +226,28 @@ describe('Mercado Pago OAuth linking (PRD 9.2)', () => {
     expect((await callback({ code: 'code-b2', state })).location.searchParams.get('mp')).toBe(
       'connected',
     );
-    expect((await rows().findOneBy({ channelId: storeB.channelId }))!.mpUserId).toBe('222');
+    expect((await activeAccount(storeB))!.mpUserId).toBe('222');
   });
 
   it('rejects a grant without offline_access, because it could not be renewed', async () => {
     const { state } = await startFlow(storeA);
     mp.grants.set('code-x', grant(333, { scope: 'read write' }));
-    const before = (await rows().findOneBy({ channelId: storeA.channelId }))!;
+    const before = (await activeAccount(storeA))!;
 
     const result = await callback({ code: 'code-x', state });
 
     expect(result.location.searchParams.get('reason')).toBe('missing_offline_access');
-    expect((await rows().findOneBy({ channelId: storeA.channelId }))!.accessToken).toBe(
-      before.accessToken,
-    );
+    expect((await activeAccount(storeA))!.accessToken).toBe(before.accessToken);
   });
 
   it('reports a failed exchange (invalid or expired code) without linking anything', async () => {
     const { state } = await startFlow(storeB);
-    const before = (await rows().findOneBy({ channelId: storeB.channelId }))!;
+    const before = (await activeAccount(storeB))!;
 
     const result = await callback({ code: 'unknown-code', state });
 
     expect(result.location.searchParams.get('reason')).toBe('exchange_failed');
-    expect((await rows().findOneBy({ channelId: storeB.channelId }))!.accessToken).toBe(
-      before.accessToken,
-    );
+    expect((await activeAccount(storeB))!.accessToken).toBe(before.accessToken);
   });
 
   it('only lets administrators with the permission start a connection', async () => {
@@ -253,7 +260,7 @@ describe('Mercado Pago OAuth linking (PRD 9.2)', () => {
     await expect(adminClient.query(START)).rejects.toThrow(/store channel/i);
   });
 
-  it('disconnect removes the credentials so another store can use the account', async () => {
+  it('unlinking retires the link and deletes nothing', async () => {
     await asStoreAdmin(adminClient, storeB);
     const { disconnectMercadoPago } = await adminClient.query(gql`
       mutation {
@@ -262,6 +269,12 @@ describe('Mercado Pago OAuth linking (PRD 9.2)', () => {
     `);
 
     expect(disconnectMercadoPago).toBe(true);
-    expect(await rows().findOneBy({ channelId: storeB.channelId })).toBeNull();
+    expect(await activeAccount(storeB)).toBeNull();
+    const link = await links().findOneByOrFail({ channelId: storeB.channelId });
+    expect(link.status).toBe('retired');
+    expect(link.retiredAt).toBeInstanceOf(Date);
+    const account = await accounts().findOneByOrFail({ mpUserId: '222' });
+    expect(account.status).toBe('connected');
+    expect(account.accessToken).not.toBe('');
   });
 });

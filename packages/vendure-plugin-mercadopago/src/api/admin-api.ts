@@ -44,15 +44,15 @@ export class MercadoPagoAdminResolver {
   @Query()
   @Allow(manageMercadoPago.Permission)
   async mercadoPagoConnection(@Ctx() ctx: RequestContext) {
-    const connection = await this.connections.findByChannelId(ctx.channelId);
-    if (!connection) return null;
+    const account = await this.connections.findActiveAccount(ctx.channelId);
+    if (!account) return null;
     return {
-      connected: this.connections.isUsable(connection),
-      status: connection.status,
-      mpUserId: connection.mpUserId,
-      expiresAt: connection.expiresAt,
-      scope: connection.scope,
-      lastError: connection.lastError,
+      connected: this.connections.isUsable(account),
+      status: account.status,
+      mpUserId: account.mpUserId,
+      expiresAt: account.expiresAt,
+      scope: account.scope,
+      lastError: account.lastError,
     };
   }
 
@@ -69,7 +69,7 @@ export class MercadoPagoAdminResolver {
   @Mutation()
   @Allow(manageMercadoPago.Permission)
   async disconnectMercadoPago(@Ctx() ctx: RequestContext): Promise<boolean> {
-    return this.connections.disconnect(ctx.channelId);
+    return this.connections.retire(ctx.channelId);
   }
 
   @Mutation()

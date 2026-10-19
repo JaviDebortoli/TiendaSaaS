@@ -55,6 +55,7 @@ function mpPayment(order: { code: string; totalWithTax: number }, overrides = {}
     currency_id: 'ARS',
     external_reference: order.code,
     ownerToken: grant.access_token,
+    collector_id: grant.user_id,
     ...overrides,
   });
 }
@@ -207,12 +208,17 @@ describe('refunds (PRD 9.9)', () => {
 
     it('fails with a message the owner can act on', async () => {
       const { order } = await settledOrder();
-      await connections.markDisconnected(store.channelId, 'revoked');
+      await connections.markDisconnected(
+        (await connections.findActiveAccount(store.channelId))!.id,
+        'revoked',
+      );
 
       const { refundOrder } = await refund(order.code, [0, 1]);
 
       expect(refundOrder.state).toBe('Failed');
-      expect(String(refundOrder.metadata.errorMessage)).toMatch(/not connected/i);
+      expect(String(refundOrder.metadata.errorMessage)).toBe(
+        `Este pago se cobró en la cuenta ${SELLER}, que ya no está vinculada. Hacé el reembolso desde el panel de Mercado Pago de esa cuenta.`,
+      );
     });
   });
 });
@@ -260,7 +266,11 @@ describe('cancelMercadoPagoPayment (PRD 9.9)', () => {
 
   it('refuses a payment that belongs to another store', async () => {
     const order = await checkoutAsGuest(shopClient, otherStore, otherPayable);
-    const foreign = mpPayment(order, { status: 'pending', ownerToken: otherGrant.access_token });
+    const foreign = mpPayment(order, {
+      status: 'pending',
+      ownerToken: otherGrant.access_token,
+      collector_id: otherGrant.user_id,
+    });
     await asStoreAdmin(adminClient, store);
 
     await expect(adminClient.query(CANCEL, { paymentId: String(foreign.id) })).rejects.toThrow(

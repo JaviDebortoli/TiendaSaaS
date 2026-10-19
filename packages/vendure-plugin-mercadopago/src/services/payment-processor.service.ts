@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { DEFAULT_CHANNEL_CODE } from '@vendure/common/lib/shared-constants';
 import {
   Channel,
   EventBus,
@@ -14,17 +15,18 @@ import {
 } from '@vendure/core';
 import { LessThan } from 'typeorm';
 import { loggerCtx, MERCADOPAGO_HANDLER_CODE } from '../constants';
+import { MercadoPagoAccount } from '../entities/mercadopago-account.entity';
+import { MercadoPagoChannelLink } from '../entities/mercadopago-channel-link.entity';
 import { ClaimStatus, MercadoPagoPaymentClaim } from '../entities/mercadopago-payment-claim.entity';
-import { AttentionReason, MercadoPagoAttentionEvent } from '../events';
+import { MercadoPagoAttentionEvent } from '../events';
 import { isUniqueViolation } from '../lib/db';
+import { runAsSettlement } from '../settlement-scope';
 import { validatePaymentAgainstOrder } from '../lib/payment-validation';
 import { mapPaymentStatus, PaymentOutcome } from '../lib/status';
 import { MercadoPagoConnectionService, MercadoPagoNotConnectedError } from './connection.service';
-import {
-  MercadoPagoApiError,
-  MercadoPagoApiService,
-  MercadoPagoPayment,
-} from './mercadopago-api.service';
+import { MercadoPagoPayment } from './mercadopago-api.service';
+import { FoundPayment, MercadoPagoPaymentOperations } from './payment-operations.service';
+import { MercadoPagoReviewService } from './review.service';
 
 export type IgnoredReason =
   | 'unknown_seller'
@@ -47,9 +49,16 @@ export type ProcessResult =
 
 export interface ProcessInput {
   mpPaymentId: string;
-  /** Store known beforehand (sync mutation, `notification_url` with the channel in the path). */
+  /**
+   * Store known beforehand (sync mutation, `notification_url` with the channel in the path). The
+   * order must belong to it, and only the accounts it has used (`active` or `retired` links) are
+   * tried.
+   */
   channelId?: ID;
-  /** `user_id` of the notification. Used to find the store when `channelId` is not known. */
+  /**
+   * `user_id` of the notification. Identifies the account when `channelId` is not known, and
+   * narrows the accounts to try when it is.
+   */
   mpUserId?: string;
   /** The order the caller expects the payment to belong to (sync mutation). */
   expectedOrderCode?: string;
@@ -64,15 +73,18 @@ const PAYABLE_STATES = new Set(['ArrangingPayment', 'ArrangingAdditionalPayment'
 
 /**
  * Turns a Mercado Pago payment into the right change in Vendure (PRD 9.7, 9.8). The payment is
- * always fetched from Mercado Pago with the store's own token: a notification, or the parameters
- * of the redirect, only say *which* payment to look at and never what happened to it.
+ * always fetched from Mercado Pago with the token of the account that collected it: a
+ * notification, or the parameters of the redirect, only say *which* payment to look at and never
+ * what happened to it. The order, and so the store, comes from the payment's own
+ * `external_reference`, never from the account.
  */
 @Injectable()
 export class MercadoPagoPaymentProcessor {
   constructor(
     private readonly connection: TransactionalConnection,
     private readonly connections: MercadoPagoConnectionService,
-    private readonly api: MercadoPagoApiService,
+    private readonly operations: MercadoPagoPaymentOperations,
+    private readonly reviews: MercadoPagoReviewService,
     private readonly orderService: OrderService,
     private readonly paymentMethodService: PaymentMethodService,
     private readonly requestContextService: RequestContextService,
@@ -89,53 +101,54 @@ export class MercadoPagoPaymentProcessor {
       return { outcome: 'ignored', reason: 'payment_not_found' };
     }
 
-    // 1. Which store?
-    const mpConnection = input.channelId
-      ? await this.connections.findByChannelId(input.channelId)
-      : input.mpUserId
-        ? await this.connections.findByMpUserId(input.mpUserId)
-        : null;
-    if (!mpConnection) {
-      Logger.warn(
-        `Notification for payment ${input.mpPaymentId} ignored: no store is linked to the seller.`,
-        loggerCtx,
-      );
-      return { outcome: 'ignored', reason: 'unknown_seller' };
-    }
-    if (input.mpUserId && input.mpUserId !== mpConnection.mpUserId) {
-      Logger.warn(
-        `Notification for payment ${input.mpPaymentId} ignored: seller ${input.mpUserId} does not match the store's account.`,
-        loggerCtx,
-      );
-      return { outcome: 'ignored', reason: 'seller_mismatch' };
-    }
-    const channelId = mpConnection.channelId;
+    // 1. Which accounts can have collected it?
+    const candidates = await this.candidateAccounts(input);
+    if ('ignored' in candidates) return candidates.ignored;
 
-    // 2. Ask Mercado Pago, with the store's token. This is the source of truth.
-    let payment: MercadoPagoPayment;
+    // 2. Ask Mercado Pago, with the account's token. This is the source of truth.
+    let found: FoundPayment | null;
     try {
-      const { accessToken } = await this.connections.getAccessToken(channelId);
-      payment = await this.api.getPayment(accessToken, input.mpPaymentId);
+      found = await this.operations.findPayment(candidates.accounts, input.mpPaymentId);
     } catch (error) {
       if (error instanceof MercadoPagoNotConnectedError) {
         Logger.warn(`Payment ${input.mpPaymentId}: ${error.message}`, loggerCtx);
         return { outcome: 'ignored', reason: 'not_connected' };
       }
-      if (error instanceof MercadoPagoApiError && error.kind === 'not_found') {
-        return { outcome: 'ignored', reason: 'payment_not_found' };
-      }
       throw error;
     }
+    if (!found) return { outcome: 'ignored', reason: 'payment_not_found' };
+    const { payment, account } = found;
 
-    // 3. Which order? Only inside this store's channel.
-    const ctx = await this.createContext(channelId);
+    // 3. Which order? Anywhere on the server: the order code is unique, and its channel is the store.
     const orderCode = payment.external_reference ?? '';
-    const order = orderCode
-      ? await this.orderService.findOneByCode(ctx, orderCode, ['payments', 'customer'])
-      : undefined;
+    const orderChannelId = await this.findOrderChannel(orderCode);
+    if (orderChannelId === undefined) {
+      Logger.warn(`Payment ${input.mpPaymentId}: no order "${orderCode}" in any store.`, loggerCtx);
+      return { outcome: 'ignored', reason: 'order_not_found' };
+    }
+    if (input.channelId !== undefined && String(orderChannelId) !== String(input.channelId)) {
+      Logger.warn(
+        `Payment ${input.mpPaymentId}: order "${orderCode}" belongs to another store than the one it was notified for.`,
+        loggerCtx,
+      );
+      return { outcome: 'ignored', reason: 'order_mismatch' };
+    }
+
+    // 4. The store must have used the account that collected the payment.
+    const link = await this.connections.findLink(orderChannelId, account.id);
+    if (!link) {
+      Logger.warn(
+        `Payment ${input.mpPaymentId} ignored: store ${orderChannelId} never used account ${account.mpUserId}.`,
+        loggerCtx,
+      );
+      return { outcome: 'ignored', reason: 'seller_mismatch' };
+    }
+
+    const ctx = await this.createContext(orderChannelId);
+    const order = await this.orderService.findOneByCode(ctx, orderCode, ['payments', 'customer']);
     if (!order) {
       Logger.warn(
-        `Payment ${input.mpPaymentId}: no order "${orderCode}" in channel ${channelId}.`,
+        `Payment ${input.mpPaymentId}: no order "${orderCode}" in channel ${orderChannelId}.`,
         loggerCtx,
       );
       return { outcome: 'ignored', reason: 'order_not_found' };
@@ -146,28 +159,35 @@ export class MercadoPagoPaymentProcessor {
 
     const outcome = mapPaymentStatus(payment.status);
     if (outcome !== 'settle') {
+      if (!found.collector.ok) {
+        // Only settling is refused for a collector problem (settle() below). A pending, rejected or
+        // reversed payment is recorded as always, so a chargeback alert is never lost; the log keeps
+        // the evidence V19 needs.
+        Logger.warn(
+          `Payment ${input.mpPaymentId} (${payment.status ?? 'unknown'}): ${found.collector.reason} (read with account ${account.mpUserId}, collector_id ${payment.collector_id ?? 'absent'}).`,
+          loggerCtx,
+        );
+      }
       await this.record(ctx, order, payment, outcome);
       return { outcome, orderCode: order.code, orderState: order.state };
     }
-    return this.settle(ctx, order, payment);
+    return this.settle(ctx, order, found, link);
   }
 
   /**
    * Cancels a payment that is still `pending` or `in_process` on Mercado Pago (PRD 9.9), for a
-   * payment that belongs to an order of the administrator's own channel.
+   * payment that belongs to an order of the administrator's own channel. The accounts tried are
+   * those the store sells with or used to sell with.
    */
   async cancelPending(ctx: RequestContext, mpPaymentId: string): Promise<void> {
     if (!PAYMENT_ID_PATTERN.test(mpPaymentId)) throw new UserInputError('Invalid payment id.');
-    const { accessToken } = await this.connections.getAccessToken(ctx.channelId);
-    let payment: MercadoPagoPayment;
-    try {
-      payment = await this.api.getPayment(accessToken, mpPaymentId);
-    } catch (error) {
-      if (error instanceof MercadoPagoApiError && error.kind === 'not_found') {
-        throw new UserInputError('Payment not found.');
-      }
-      throw error;
+    const accounts = await this.connections.accountsForChannel(ctx.channelId);
+    const found = await this.operations.findPayment(accounts, mpPaymentId);
+    if (!found) throw new UserInputError('Payment not found.');
+    if (!found.collector.ok) {
+      throw new UserInputError('The payment was not collected by an account of this store.');
     }
+    const { payment, account } = found;
     const order = payment.external_reference
       ? await this.orderService.findOneByCode(ctx, payment.external_reference)
       : undefined;
@@ -177,7 +197,8 @@ export class MercadoPagoPaymentProcessor {
         `Only pending or in-process payments can be cancelled (this one is ${payment.status}).`,
       );
     }
-    await this.api.cancelPayment(accessToken, mpPaymentId);
+    const result = await this.operations.cancel(ctx, mpPaymentId, account.mpUserId);
+    if (!result.ok) throw new UserInputError(result.message);
     await this.addNote(ctx, order, `Mercado Pago payment ${mpPaymentId} was cancelled.`);
   }
 
@@ -189,11 +210,78 @@ export class MercadoPagoPaymentProcessor {
     return items.find((method) => method.handler.code === MERCADOPAGO_HANDLER_CODE)?.code;
   }
 
+  /**
+   * The accounts that may have collected the payment. With a known store, those it sells with or
+   * used to sell with, narrowed to the notification's `user_id` when there is one. Without it, the
+   * account the notification names, which must still hold tokens: with none, the payment cannot be
+   * checked, and the platform is told instead of discarding it silently.
+   */
+  private async candidateAccounts(
+    input: ProcessInput,
+  ): Promise<{ accounts: MercadoPagoAccount[] } | { ignored: ProcessResult }> {
+    if (input.channelId !== undefined) {
+      let accounts = await this.connections.accountsForChannel(input.channelId);
+      if (input.mpUserId) {
+        const narrowed = accounts.filter((account) => account.mpUserId === input.mpUserId);
+        if (narrowed.length === 0 && accounts.length > 0) {
+          Logger.warn(
+            `Notification for payment ${input.mpPaymentId} ignored: seller ${input.mpUserId} is not an account of store ${input.channelId}.`,
+            loggerCtx,
+          );
+          return { ignored: { outcome: 'ignored', reason: 'seller_mismatch' } };
+        }
+        accounts = narrowed;
+      }
+      if (accounts.length === 0) {
+        Logger.warn(
+          `Notification for payment ${input.mpPaymentId} ignored: store ${input.channelId} has no Mercado Pago account.`,
+          loggerCtx,
+        );
+        return { ignored: { outcome: 'ignored', reason: 'unknown_seller' } };
+      }
+      return { accounts };
+    }
+
+    const account = input.mpUserId
+      ? await this.connections.findAccountByMpUserId(input.mpUserId)
+      : null;
+    if (!this.connections.hasTokens(account)) {
+      Logger.warn(
+        `Notification for payment ${input.mpPaymentId} ignored: ${account ? 'the account has no tokens left' : 'no account matches the seller'}.`,
+        loggerCtx,
+      );
+      this.eventBus.publish(
+        new MercadoPagoAttentionEvent('unverifiable_payment', null, {
+          mpPaymentId: input.mpPaymentId,
+          mpUserId: input.mpUserId,
+          message: account
+            ? `A notification arrived for payment ${input.mpPaymentId} of account ${input.mpUserId}, which has no tokens left, so it could not be checked.`
+            : `A notification arrived for payment ${input.mpPaymentId} of seller ${input.mpUserId ?? '(unknown)'}, which is not a known account, so it could not be checked.`,
+        }),
+      );
+      return {
+        ignored: { outcome: 'ignored', reason: account ? 'not_connected' : 'unknown_seller' },
+      };
+    }
+    return { accounts: [account] };
+  }
+
+  /** The store (non-default channel) an order belongs to, wherever it was placed. */
+  private async findOrderChannel(orderCode: string): Promise<ID | undefined> {
+    if (!orderCode) return undefined;
+    const order = await this.connection.rawConnection
+      .getRepository(Order)
+      .findOne({ where: { code: orderCode }, relations: { channels: true } });
+    return order?.channels.find((channel) => channel.code !== DEFAULT_CHANNEL_CODE)?.id;
+  }
+
   private async settle(
     ctx: RequestContext,
     order: Order,
-    payment: MercadoPagoPayment,
+    found: FoundPayment,
+    link: MercadoPagoChannelLink,
   ): Promise<ProcessResult> {
+    const { payment, account } = found;
     const mpPaymentId = String(payment.id);
     const orderCode = order.code;
     const base = { orderCode, orderState: order.state };
@@ -203,6 +291,21 @@ export class MercadoPagoPaymentProcessor {
       return { outcome: 'already_settled', ...base };
     }
 
+    // The collector must be the account the payment was read with (PRD 9.7). This also stops an
+    // approved payment of another account, with a forged `external_reference`, from settling the
+    // order.
+    if (!found.collector.ok) {
+      await this.reviews.markNeedsReview(
+        ctx,
+        order,
+        mpPaymentId,
+        found.collector.reason,
+        account.mpUserId,
+        payment.collector_id,
+      );
+      return { outcome: 'needs_review', ...base, reason: found.collector.reason };
+    }
+
     const validation = validatePaymentAgainstOrder(payment, {
       code: order.code,
       totalWithTax: order.totalWithTax,
@@ -210,11 +313,17 @@ export class MercadoPagoPaymentProcessor {
     });
     if (!validation.ok) {
       // Money was taken for a different amount (for example the cart changed during payment).
-      await this.markNeedsReview(ctx, order, mpPaymentId, 'amount_mismatch', validation.reason);
+      await this.reviews.markNeedsReview(
+        ctx,
+        order,
+        mpPaymentId,
+        'amount_mismatch',
+        validation.reason,
+      );
       return { outcome: 'needs_review', ...base, reason: validation.reason };
     }
     if (!PAYABLE_STATES.has(order.state)) {
-      await this.markNeedsReview(ctx, order, mpPaymentId, 'order_not_payable', order.state);
+      await this.reviews.markNeedsReview(ctx, order, mpPaymentId, 'order_not_payable', order.state);
       return { outcome: 'needs_review', ...base, reason: `order_state_${order.state}` };
     }
 
@@ -232,20 +341,28 @@ export class MercadoPagoPaymentProcessor {
 
     try {
       // Vendure 3.8 requires a transaction around addPaymentToOrder.
-      const result = await this.connection.withTransaction(ctx, async (txCtx) => {
-        // Payments of the same order are applied one at a time, so two different approved
-        // payments racing for one order cannot both be added.
-        await this.lockOrder(txCtx, order.id);
-        return this.orderService.addPaymentToOrder(txCtx, order.id, {
-          method: methodCode,
-          metadata: { mpPaymentId },
-        });
-      });
+      const result = await runAsSettlement(order.id, () =>
+        this.connection.withTransaction(ctx, async (txCtx) => {
+          // Payments of the same order are applied one at a time, so two different approved
+          // payments racing for one order cannot both be added.
+          await this.lockOrder(txCtx, order.id);
+          return this.orderService.addPaymentToOrder(txCtx, order.id, {
+            method: methodCode,
+            metadata: { mpPaymentId },
+          });
+        }),
+      );
       if ('errorCode' in result) {
         await this.setClaimStatus(mpPaymentId, 'recorded');
         if (result.errorCode === 'ORDER_PAYMENT_STATE_ERROR') {
           // Another payment settled the order first: money must go back, a person decides.
-          await this.markNeedsReview(ctx, order, mpPaymentId, 'order_not_payable', 'already paid');
+          await this.reviews.markNeedsReview(
+            ctx,
+            order,
+            mpPaymentId,
+            'order_not_payable',
+            'already paid',
+          );
           return { outcome: 'needs_review', ...base, reason: 'order_not_payable' };
         }
         throw new Error(
@@ -253,6 +370,18 @@ export class MercadoPagoPaymentProcessor {
         );
       }
       await this.setClaimStatus(mpPaymentId, 'settled');
+      if (link.status === 'released') {
+        // The payment is verified, so it is honoured; but a released link should have no payments
+        // left to arrive, so the rule that releases links needs a look.
+        this.eventBus.publish(
+          new MercadoPagoAttentionEvent('released_link_payment', ctx.channelId, {
+            orderCode,
+            mpPaymentId,
+            mpUserId: account.mpUserId,
+            message: `Approved payment ${mpPaymentId} arrived for the released link between store ${ctx.channel.code} and account ${account.mpUserId}.`,
+          }),
+        );
+      }
       return { outcome: 'settled', orderCode, orderState: result.state };
     } catch (error) {
       // Release the claim so a retry (or the sync mutation) can try again.
@@ -367,56 +496,6 @@ export class MercadoPagoPaymentProcessor {
         }),
       );
     }
-  }
-
-  /** Approved money that cannot settle the order automatically: a person decides (PRD 9.8). */
-  private async markNeedsReview(
-    ctx: RequestContext,
-    order: Order,
-    mpPaymentId: string,
-    reason: AttentionReason,
-    detail: string,
-  ): Promise<void> {
-    const row = await this.claims.findOneBy({ mpPaymentId });
-    if (row && (row.status === 'processing' || row.status === 'settled')) return;
-    if (row?.status === 'needs_review' && row.note === `${reason}:${detail}`) return; // already alerted
-
-    try {
-      if (row) {
-        await this.claims.update(
-          { id: row.id },
-          { status: 'needs_review', lastStatus: 'approved', note: `${reason}:${detail}` },
-        );
-      } else {
-        await this.claims.save(
-          this.claims.create({
-            mpPaymentId,
-            channelId: ctx.channelId,
-            orderCode: order.code,
-            status: 'needs_review',
-            lastStatus: 'approved',
-            claimedAt: new Date(),
-            note: `${reason}:${detail}`,
-          }),
-        );
-      }
-    } catch (error) {
-      if (isUniqueViolation(error)) return;
-      throw error;
-    }
-
-    const message =
-      reason === 'amount_mismatch'
-        ? `Approved Mercado Pago payment ${mpPaymentId} does not match the order total (${detail}). It was not added to the order: review it and refund if needed.`
-        : `Approved Mercado Pago payment ${mpPaymentId} arrived but the order is ${detail}. It was not added to the order: review it and refund if needed.`;
-    await this.addNote(ctx, order, message);
-    this.eventBus.publish(
-      new MercadoPagoAttentionEvent(reason, ctx.channelId, {
-        orderCode: order.code,
-        mpPaymentId,
-        message,
-      }),
-    );
   }
 
   private async addNote(ctx: RequestContext, order: Order, note: string): Promise<void> {
