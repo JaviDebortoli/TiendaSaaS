@@ -39,10 +39,27 @@ test.describe('the result page does not believe the URL', () => {
     await expect(paymentTitle(page)).not.toHaveText('¡Pago confirmado!');
   });
 
-  test('without any order it says so instead of inventing one', async ({ page }) => {
+  test('without any order or reference it keeps saying "procesando" instead of inventing one', async ({
+    page,
+  }) => {
     await page.goto('/checkout/result?status=approved');
 
-    await expect(page.getByText(/No encontramos un pedido/)).toBeVisible();
+    // Nothing identifies an order or a payment: there is nothing to ask, and the webhook settles it.
+    await expect(paymentTitle(page)).toHaveText(/Procesando/);
+    await expect(page.getByTestId('order-code')).toHaveCount(0);
+    await expect(paymentTitle(page)).not.toHaveText('¡Pago confirmado!');
+  });
+
+  test('a reference that looks like an order code is not read as one', async ({ page }) => {
+    // The text of the reference is never turned into an order: with no session order and nothing the
+    // server knows, nothing is confirmed and no order is shown.
+    await page.goto(
+      '/checkout/result?status=approved&payment_id=1&external_reference=ABCDEF123456-AAAAAAAAAAAAAAAAAAAAAA',
+    );
+    await page.waitForTimeout(3000);
+
+    await expect(paymentTitle(page)).toHaveText(/Procesando/);
+    await expect(page.getByTestId('order-code')).toHaveCount(0);
   });
 
   test('the status endpoint rejects malformed parameters', async ({ request }) => {
@@ -51,5 +68,11 @@ test.describe('the result page does not believe the URL', () => {
       (await request.get('/api/payment-status?order=ABC123&paymentId=../../users/me')).status(),
     ).toBe(400);
     expect((await request.get('/api/payment-status')).status()).toBe(400);
+    // A payment to check needs both pointers, and the reference only has its own alphabet.
+    expect((await request.get('/api/payment-status?paymentId=1')).status()).toBe(400);
+    expect((await request.get('/api/payment-status?externalReference=ABC-DEF')).status()).toBe(400);
+    expect(
+      (await request.get('/api/payment-status?externalReference=../x&paymentId=1')).status(),
+    ).toBe(400);
   });
 });

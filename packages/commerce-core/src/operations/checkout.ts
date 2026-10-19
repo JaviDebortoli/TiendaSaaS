@@ -101,8 +101,8 @@ export const CreateMercadoPagoCheckoutMutation = graphql(`
 `);
 
 export const SyncMercadoPagoPaymentMutation = graphql(`
-  mutation SyncMercadoPagoPayment($orderCode: String!, $paymentId: String!) {
-    syncMercadoPagoPayment(orderCode: $orderCode, paymentId: $paymentId) {
+  mutation SyncMercadoPagoPayment($externalReference: String!, $paymentId: String!) {
+    syncMercadoPagoPayment(externalReference: $externalReference, paymentId: $paymentId) {
       __typename
       ... on MercadoPagoPaymentSync {
         outcome

@@ -77,7 +77,8 @@ async function pay(preferenceId: string, scenario: Scenario): Promise<string> {
   if (!preference) throw new Error(`Unknown preference ${preferenceId}`);
   const items = preference.items as { unit_price: number; quantity: number }[];
   const amount = items.reduce((sum, i) => sum + i.unit_price * i.quantity, 0);
-  const orderCode = String(preference.external_reference);
+  // The reference the platform issued: `<order code>-<identifier>`, passed on whole.
+  const reference = String(preference.external_reference);
   const urls = preference.back_urls as { success: string; failure: string; pending: string };
 
   const status =
@@ -92,7 +93,9 @@ async function pay(preferenceId: string, scenario: Scenario): Promise<string> {
     status_detail: status === 'approved' ? 'accredited' : status,
     transaction_amount: Math.round(amount * 100) / 100,
     currency_id: 'ARS',
-    external_reference: orderCode,
+    external_reference: reference,
+    // The merchant order of the payment says which preference it came from.
+    preferenceId,
     ownerToken: ACCESS_TOKEN,
     collector_id: SELLER_ID,
   });
@@ -116,7 +119,7 @@ async function pay(preferenceId: string, scenario: Scenario): Promise<string> {
   target.searchParams.set('payment_id', String(payment.id));
   target.searchParams.set('status', reportedStatus);
   target.searchParams.set('collection_status', reportedStatus);
-  target.searchParams.set('external_reference', orderCode);
+  target.searchParams.set('external_reference', reference);
   target.searchParams.set('merchant_order_id', '1');
   return target.toString();
 }

@@ -10,7 +10,8 @@ const formatMoney = (cents: number, currency: string) =>
 
 interface Status {
   state: PaymentState;
-  orderCode: string;
+  /** The order of the answer: the session's own, or the one the server resolved. */
+  orderCode?: string | null;
   total: number | null;
   currency: string | null;
 }
@@ -25,10 +26,14 @@ const GIVE_UP_MS = 120_000;
  */
 export function PaymentStatus({
   orderCode,
+  externalReference,
   paymentId,
   syncAfterMs,
 }: {
-  orderCode: string;
+  /** The order of this session, if it has one. */
+  orderCode?: string;
+  /** The `external_reference` of the redirect, passed on untouched. */
+  externalReference?: string;
   paymentId?: string;
   syncAfterMs: number;
 }) {
@@ -42,6 +47,12 @@ export function PaymentStatus({
   const started = useRef(Date.now());
 
   useEffect(() => {
+    // Nothing identifies an order or a payment (the redirect carried nothing and the session has no
+    // order): there is nothing to ask. The page says "procesando" and the webhook settles the order.
+    if (!orderCode && !(externalReference && paymentId)) {
+      setGaveUp(true);
+      return;
+    }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
 
@@ -49,9 +60,14 @@ export function PaymentStatus({
       const elapsed = Date.now() - started.current;
       // The webhook normally settles the order first. Only if it is late do we ask the server to
       // check the payment itself.
-      const useSync = paymentId !== undefined && elapsed >= syncAfterMs;
-      const query = new URLSearchParams({ order: orderCode });
-      if (useSync) query.set('paymentId', paymentId);
+      const useSync =
+        paymentId !== undefined && externalReference !== undefined && elapsed >= syncAfterMs;
+      const query = new URLSearchParams();
+      if (orderCode) query.set('order', orderCode);
+      if (useSync) {
+        query.set('externalReference', externalReference);
+        query.set('paymentId', paymentId);
+      }
       try {
         const response = await fetch(`/api/payment-status?${query}`, { cache: 'no-store' });
         if (response.ok && !cancelled) {
@@ -75,7 +91,7 @@ export function PaymentStatus({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [orderCode, paymentId, syncAfterMs]);
+  }, [orderCode, externalReference, paymentId, syncAfterMs]);
 
   const total =
     status.total !== null ? formatMoney(status.total, status.currency ?? 'ARS') : undefined;

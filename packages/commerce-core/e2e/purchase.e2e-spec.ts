@@ -39,18 +39,30 @@ const shopUrl = `http://localhost:${port}/shop-api`;
 const buyer = (store: TestStore) =>
   createCommerce({ apiUrl: shopUrl, channelToken: store.token, session: memorySession() });
 
+/** The reference and the id of the last preference the platform issued (Mercado Pago's side). */
+const latestPreference = () => ({
+  reference: String(
+    mp.requestsTo('POST', '/checkout/preferences').at(-1)!.body!.external_reference,
+  ),
+  preferenceId: [...mp.preferences.keys()].at(-1)!,
+});
+
 let nextPaymentId = 3000;
-const mpPayment = (order: { code: string; totalWithTax: number }, overrides = {}) =>
-  mp.addPayment({
+/** A payment made from the last preference issued, as Mercado Pago would create it. */
+const mpPayment = (order: { totalWithTax: number }, overrides = {}) => {
+  const { reference, preferenceId } = latestPreference();
+  return mp.addPayment({
     id: ++nextPaymentId,
     status: 'approved',
     transaction_amount: order.totalWithTax / 100,
     currency_id: 'ARS',
-    external_reference: order.code,
+    external_reference: reference,
+    preferenceId,
     ownerToken: grantA.access_token,
     collector_id: grantA.user_id,
     ...overrides,
   });
+};
 
 /** Fills a cart and reaches the point where the buyer is sent to Mercado Pago. */
 async function readyToPay(commerce: ReturnType<typeof buyer>, email = 'ana@example.test') {
@@ -112,7 +124,8 @@ describe('guest purchase end to end (PRD 9.6)', () => {
 
     expect(started.redirectUrl).toMatch(/^https:\/\/mp\.test\/checkout\/pref-/);
     const preference = mp.requestsTo('POST', '/checkout/preferences').at(-1)!.body!;
-    expect(preference.external_reference).toBe(cart.code);
+    // `<order code>-<identifier>`: the order code alone is never what Mercado Pago gets.
+    expect(preference.external_reference).toMatch(new RegExp(`^${cart.code}-[A-Za-z0-9_-]{22}$`));
     expect(preference.auto_return).toBe('approved');
 
     // Mercado Pago approves and notifies; the buyer comes back to the result page.
@@ -120,6 +133,7 @@ describe('guest purchase end to end (PRD 9.6)', () => {
     await sendWebhook(port, { dataId: payment.id, userId: SELLER_A });
     const result = await commerce.payment.waitForPayment({
       orderCode: cart.code,
+      externalReference: payment.external_reference,
       paymentId: String(payment.id),
       intervalMs: 100,
       syncAfterMs: 5000,
@@ -144,6 +158,7 @@ describe('guest purchase end to end (PRD 9.6)', () => {
 
     const result = await commerce.payment.waitForPayment({
       orderCode: cart.code,
+      externalReference: payment.external_reference,
       paymentId: String(payment.id),
       intervalMs: 100,
       syncAfterMs: 400,
@@ -161,6 +176,7 @@ describe('guest purchase end to end (PRD 9.6)', () => {
 
     const result = await commerce.payment.waitForPayment({
       orderCode: cart.code,
+      externalReference: payment.external_reference,
       paymentId: String(payment.id),
       intervalMs: 100,
       syncAfterMs: 300,
@@ -179,6 +195,7 @@ describe('guest purchase end to end (PRD 9.6)', () => {
 
     const result = await commerce.payment.waitForPayment({
       orderCode: cart.code,
+      externalReference: rejected.external_reference,
       paymentId: String(rejected.id),
       intervalMs: 100,
       syncAfterMs: 300,
@@ -192,6 +209,7 @@ describe('guest purchase end to end (PRD 9.6)', () => {
     const approved = mpPayment(cart);
     const retry = await commerce.payment.waitForPayment({
       orderCode: cart.code,
+      externalReference: approved.external_reference,
       paymentId: String(approved.id),
       intervalMs: 100,
       syncAfterMs: 300,
@@ -239,6 +257,7 @@ describe('optional account (PRD 6.2)', () => {
     const payment = mpPayment(cart);
     await guest.payment.waitForPayment({
       orderCode: cart.code,
+      externalReference: payment.external_reference,
       paymentId: String(payment.id),
       syncAfterMs: 0,
       intervalMs: 100,
