@@ -237,6 +237,10 @@ describe('mp-connect (PRD 9.4)', () => {
     );
     expect(connections.isUsable(row)).toBe(false);
     expect(await connections.isChannelUsable(revokedStore.channelId)).toBe(false);
+    // The confirmed revocation retired the link of the store (PRD 9.4).
+    expect((await connections.listLinks(revokedStore.channelId)).map((l) => l.status)).toEqual([
+      'retired',
+    ]);
     // The other store is not affected.
     expect((await connections.findAccountByMpUserId(String(SELLER)))!.status).toBe('connected');
   });

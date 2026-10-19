@@ -29,8 +29,9 @@ const TEXTS: Record<AttentionReason, { title: string; message: string; action: s
   account_disconnected: {
     title: 'Mercado Pago quedó desconectada',
     message:
-      'Se revocó el acceso de la tienda a la cuenta de Mercado Pago. Mientras tanto, los compradores no pueden pagar con Mercado Pago.',
-    action: 'Entrá al panel, abrí Ajustes › Mercado Pago y volvé a vincular tu cuenta.',
+      'Se revocó el acceso a la cuenta de Mercado Pago de la tienda, y la cuenta quedó retirada de la tienda. Mientras tanto, los compradores no pueden pagar con Mercado Pago.',
+    action:
+      'Para volver a cobrar, entrá al panel, abrí Ajustes › Mercado Pago y vinculá una cuenta (la misma, volviendo a autorizarla, u otra). Mientras la cuenta revocada no vuelva a autorizarse, los reembolsos de sus ventas anteriores hacelos desde el panel de Mercado Pago.',
   },
   amount_mismatch: {
     title: 'Un pago aprobado no coincide con el pedido',

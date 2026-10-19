@@ -345,8 +345,16 @@ export class MercadoPagoConnectionService {
   }
 
   /**
-   * The seller revoked access: the account, and so every link it has, stops working. The tokens
-   * are useless after a revocation, so they are not kept.
+   * The seller revoked access, confirmed with Mercado Pago itself (never taken from the body of an
+   * `mp-connect` notification): the account stops working and its tokens, useless now, are not kept.
+   *
+   * The account belongs to its holder, not to the store, so a store cannot go on selling with it
+   * without a new authorization: every `active` link becomes `retired`. The store keeps what a
+   * retired link gives (notifications, pending payments, and refunds once the account has tokens
+   * again). Authorizing the account again in the same store reactivates its link; if another store
+   * took it meanwhile, that is rejected like any account that is active elsewhere.
+   *
+   * A failed renewal is not a revocation (see `doRefresh`): there the link stays `active`.
    */
   async markDisconnected(accountId: ID, reason: string): Promise<void> {
     const account = await this.findAccountById(accountId);
@@ -355,7 +363,15 @@ export class MercadoPagoConnectionService {
     account.lastError = reason.slice(0, MAX_ERROR_LENGTH);
     account.accessToken = '';
     account.refreshToken = '';
-    await this.accounts.save(account);
+    await this.connection.rawConnection.transaction(async (manager) => {
+      await manager.getRepository(MercadoPagoAccount).save(account);
+      await manager
+        .getRepository(MercadoPagoChannelLink)
+        .update(
+          { accountId: account.id, status: 'active' },
+          { status: 'retired', retiredAt: new Date() },
+        );
+    });
     await this.notifyChannels(account, 'account_disconnected', reason);
   }
 

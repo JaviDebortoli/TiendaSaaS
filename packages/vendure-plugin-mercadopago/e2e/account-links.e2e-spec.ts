@@ -172,6 +172,10 @@ async function refundWhole(store: TestStore, code: string) {
 }
 
 const reasons = () => events.map((e) => e.reason);
+const statuses = async (store: TestStore) =>
+  Object.fromEntries(
+    (await connections.listLinks(store.channelId)).map((l) => [l.account.mpUserId, l.status]),
+  );
 
 beforeAll(async () => {
   mp.start();
@@ -403,6 +407,44 @@ describe('an approved payment for a released link', () => {
     expect(await notify(payment, 424242)).toEqual({ outcome: 'ignored', reason: 'unknown_seller' });
 
     expect(events.map((e) => [e.reason, e.channelId])).toEqual([['unverifiable_payment', null]]);
+  });
+});
+
+describe('a pending payment of an account whose access was revoked (PRD 9.4)', () => {
+  it('cannot be verified while the account has no tokens: the platform is told and nothing settles', async () => {
+    await connections.link(storeA.channelId, gx);
+    const voucher = await checkoutAsGuest(shopClient, storeA, payableA);
+    const voucherPayment = pay(voucher, gx, { status: 'pending' });
+    expect(await notify(voucherPayment, X)).toMatchObject({ outcome: 'pending' });
+    expect(await connections.reconcileAfterConnectNotification(String(X))).toBe('disconnected');
+    events.length = 0;
+    voucherPayment.status = 'approved';
+
+    expect(await notify(voucherPayment, X)).toEqual({
+      outcome: 'ignored',
+      reason: 'not_connected',
+    });
+
+    expect(await stateOf(storeA, voucher.code)).toBe('ArrangingPayment');
+    expect(events.map((e) => [e.reason, e.channelId])).toEqual([['unverifiable_payment', null]]);
+  });
+
+  it('settles like any retired link once the holder authorizes the account again somewhere', async () => {
+    await connections.link(storeA.channelId, gx);
+    const voucher = await checkoutAsGuest(shopClient, storeA, payableA);
+    const voucherPayment = pay(voucher, gx, { status: 'pending' });
+    await notify(voucherPayment, X);
+    await connections.reconcileAfterConnectNotification(String(X));
+    await connections.link(storeB.channelId, gx); // the holder authorizes X again, in store B
+    voucherPayment.status = 'approved';
+
+    expect(await notify(voucherPayment, X)).toMatchObject({
+      outcome: 'settled',
+      orderCode: voucher.code,
+    });
+
+    expect(await stateOf(storeA, voucher.code)).toBe('PaymentSettled');
+    expect(await statuses(storeA)).toEqual({ [X]: 'retired' });
   });
 });
 
