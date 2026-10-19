@@ -177,7 +177,7 @@ corre junto con V20: mismas cuentas de prueba, mismos pasos de credenciales.
    `refresh_token` **ya usado** (el que se acaba de rotar): es el caso de dos procesos que renuevan a la vez.
 5. Esperado: **401** con un cuerpo que dice que el token es inválido en las tres llamadas, e
    `invalid_grant` (400) en la renovación. La plataforma lo reconoce así: 401 en el token de acceso y
-   `invalid_grant` o un rechazo de autenticación en la renovación; un 403 o un 404 no cuentan.
+   `invalid_grant` en la renovación; un 403, un 404 o cualquier otro rechazo de la renovación no cuentan.
 6. **Si algo es distinto** (por ejemplo, un 403 o un 400 con otro cuerpo para un token revocado), no cambies
    la regla: avisame con los códigos y los cuerpos, y decidimos qué respuestas cuentan.
 

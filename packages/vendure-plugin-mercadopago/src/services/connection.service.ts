@@ -67,12 +67,13 @@ export function isTokenRejection(error: unknown): error is MercadoPagoApiError {
   return error instanceof MercadoPagoApiError && error.kind === 'auth' && error.status === 401;
 }
 
-/** Renewing answered that the refresh token is no longer valid: the only proof of a revocation. */
+/**
+ * Renewing answered `invalid_grant`: the refresh token is no longer valid, the only proof of a
+ * revocation. Any other refusal (a wrong client secret, an authentication error of the application,
+ * a 5xx) says nothing about the seller's access and never retires an account (PRD 9.4, V24).
+ */
 function isRefreshRejection(error: unknown): boolean {
-  return (
-    error instanceof MercadoPagoApiError &&
-    (error.kind === 'invalid_grant' || error.kind === 'auth')
-  );
+  return error instanceof MercadoPagoApiError && error.kind === 'invalid_grant';
 }
 
 /** What checking an account's access found out (PRD 9.4). */
@@ -413,7 +414,20 @@ export class MercadoPagoConnectionService {
         renewed = await this.renewLocked(current, false);
       } catch (error) {
         if (!isRefreshRejection(error)) throw error;
-        await this.disconnectLocked(current.id, 'Access was revoked from Mercado Pago.');
+        // The refresh token that was spent is the proof: if the stored one is another (the store
+        // authorized the account again meanwhile), nothing was revoked.
+        const left = await this.disconnectLocked(
+          current.id,
+          'Access was revoked from Mercado Pago.',
+          current.refreshToken,
+        );
+        if (left) {
+          return {
+            kind: 'replaced',
+            account: left,
+            accessToken: this.cipher.decrypt(left.accessToken, accountAccessContext(left.mpUserId)),
+          };
+        }
         return { kind: 'revoked' };
       }
       this.verifiedAt.set(String(current.id), Date.now());
@@ -512,8 +526,8 @@ export class MercadoPagoConnectionService {
    * `mp-connect` notification): the account stops working and its tokens, useless now, are not kept.
    * Takes the account lock and reads the account again, like every change to its tokens.
    */
-  markDisconnected(accountId: ID, reason: string): Promise<void> {
-    return this.withAccountLock(accountId, () => this.disconnectLocked(accountId, reason));
+  async markDisconnected(accountId: ID, reason: string): Promise<void> {
+    await this.withAccountLock(accountId, () => this.disconnectLocked(accountId, reason));
   }
 
   /**
@@ -524,11 +538,21 @@ export class MercadoPagoConnectionService {
    * took it meanwhile, that is rejected like any account that is active elsewhere.
    *
    * A failed renewal is not a revocation (see `renewLocked`): there the link stays `active`.
-   * Only callable with the account lock held, after its tokens were read again.
+   * Only callable with the account lock held. It reads the account again; when
+   * `spentRefreshToken` is given and the stored one is another, the tokens were replaced after the
+   * proof was taken, nothing is disconnected and the account as it is now is returned. Returns null
+   * once the account is disconnected (or was already, or does not exist).
    */
-  private async disconnectLocked(accountId: ID, reason: string): Promise<void> {
+  private async disconnectLocked(
+    accountId: ID,
+    reason: string,
+    spentRefreshToken?: string,
+  ): Promise<MercadoPagoAccount | null> {
     const account = await this.findAccountById(accountId);
-    if (!account) return;
+    if (!account || !this.hasTokens(account)) return null;
+    if (spentRefreshToken !== undefined && account.refreshToken !== spentRefreshToken) {
+      return account;
+    }
     account.status = 'disconnected';
     account.lastError = reason.slice(0, MAX_ERROR_LENGTH);
     account.accessToken = '';
@@ -544,13 +568,13 @@ export class MercadoPagoConnectionService {
     });
     this.verifiedAt.delete(String(account.id));
     await this.notifyChannels(account, 'account_disconnected', reason);
+    return null;
   }
 
-  private doRefresh(accountId: ID): Promise<MercadoPagoAccount> {
+  private async doRefresh(accountId: ID): Promise<MercadoPagoAccount> {
     // What this caller saw, before it waited for the lock.
-    const seenPromise = this.findAccountById(accountId);
+    const seen = await this.findAccountById(accountId);
     return this.withAccountLock(accountId, async () => {
-      const seen = await seenPromise;
       const current = await this.findAccountById(accountId);
       if (!this.hasTokens(current)) throw new MercadoPagoNotConnectedError();
       // Another process renewed it while this call waited: those tokens are the ones to use.

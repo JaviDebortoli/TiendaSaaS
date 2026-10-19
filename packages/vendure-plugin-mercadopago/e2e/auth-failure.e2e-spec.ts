@@ -244,6 +244,37 @@ describe('a 401 from Mercado Pago is a suspected revocation (PRD 9.4)', () => {
     }
   });
 
+  it('does not retire an account because the application itself is refused (a wrong client secret)', async () => {
+    const grant = await relink(grants());
+    mp.rejectedTokens.set(grant.access_token, 401);
+    mp.oauthStatus = 401; // `invalid_client`: nothing to do with the seller's access
+    const order = await checkoutAsGuest(shopClient, store, payable);
+
+    const result = await create(order.code);
+
+    expect(result).toMatchObject({ reason: 'MERCADOPAGO_UNAVAILABLE' });
+    expect(await accountStatus()).toBe('connected');
+    expect(await linkStatuses()).toEqual(['active']);
+    expect(events).toHaveLength(0);
+  });
+
+  it('does not retire an account whose store authorized it again while the renewal was refused', async () => {
+    const grant = await relink(grants());
+    const reauthorized = grants();
+    mp.rejectedTokens.set(grant.access_token, 401); // the renewal below is refused: no refresh grant
+    mp.oauthDelayMs = 300;
+    const { id } = (await connections.findAccountByMpUserId(String(SELLER)))!;
+
+    const verdict = connections.verifyAccess(id, grant.access_token);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await connections.link(store.channelId, reauthorized); // new tokens, written under no lock
+
+    expect((await verdict).kind).toBe('replaced');
+    expect(await accountStatus()).toBe('connected');
+    expect(await linkStatuses()).toEqual(['active']);
+    expect(events).toHaveLength(0);
+  });
+
   it('does not check anything for a 403 or a 404', async () => {
     const grant = await relink(grants());
     const account = (await connections.findAccountByMpUserId(String(SELLER)))!;

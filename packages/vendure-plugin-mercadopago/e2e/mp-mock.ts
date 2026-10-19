@@ -79,6 +79,8 @@ export class MercadoPagoMock {
    * account fine while other calls are refused, 503 for one that cannot tell.
    */
   meStatus: number | undefined = undefined;
+  /** When set, the token endpoint answers this status (a wrong client secret, say) whatever it is asked. */
+  oauthStatus: number | undefined = undefined;
   /** When set, a refresh token works once, like Mercado Pago's: using it again is `invalid_grant`. */
   singleUseRefreshTokens = false;
   /** Artificial latency of the token endpoint, to make two renewals overlap. */
@@ -124,6 +126,12 @@ export class MercadoPagoMock {
       http.post(`${API}/oauth/token`, async ({ request }) => {
         const body = await this.record(request);
         if (this.oauthDelayMs) await new Promise((r) => setTimeout(r, this.oauthDelayMs));
+        if (this.oauthStatus !== undefined) {
+          return HttpResponse.json(
+            { error: 'invalid_client', message: 'Invalid client', status: this.oauthStatus },
+            { status: this.oauthStatus },
+          );
+        }
         const grant =
           body?.grant_type === 'refresh_token'
             ? this.refreshGrants.get(String(body.refresh_token))
@@ -248,6 +256,7 @@ export class MercadoPagoMock {
     this.validTokens.clear();
     this.rejectedTokens.clear();
     this.meStatus = undefined;
+    this.oauthStatus = undefined;
     this.singleUseRefreshTokens = false;
     this.oauthDelayMs = 0;
     this.payments.clear();
