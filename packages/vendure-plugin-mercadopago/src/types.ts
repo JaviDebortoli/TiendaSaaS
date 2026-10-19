@@ -43,6 +43,11 @@ export interface MercadoPagoPluginOptions {
   /** Renew connections that expire in fewer than this many days. Default 30 (PRD 9.4). */
   refreshWindowDays?: number;
   /**
+   * Minutes during which an account that was just found fine is not checked again when Mercado
+   * Pago rejects its token, so a busy store does not start a check per buyer. Default 5 (PRD 9.4).
+   */
+  authCheckPauseMinutes?: number;
+  /**
    * A retired link is released only after this many days with no settled payment of that link
    * (same store, same account). Mercado Pago lets a payment be refunded for 180 days, so by then
    * nothing is left to refund with that account. Default 180 (PRD 9.4).
@@ -73,6 +78,11 @@ export function resolveOptions(options: MercadoPagoPluginOptions): ResolvedMerca
       throw new Error(`Mercado Pago option ${key} must be a number of days, 0 or more.`);
     }
   }
+  if (!Number.isFinite(resolved.authCheckPauseMinutes) || resolved.authCheckPauseMinutes < 0) {
+    throw new Error(
+      'Mercado Pago option authCheckPauseMinutes must be a number of minutes, 0 or more.',
+    );
+  }
   return resolved;
 }
 
@@ -85,6 +95,7 @@ function resolveDefaults(options: MercadoPagoPluginOptions): ResolvedMercadoPago
     preferenceTtlMinutes: 30,
     preferenceItemsMode: 'lines',
     refreshWindowDays: 30,
+    authCheckPauseMinutes: 5,
     releaseAfterLastPaymentDays: 180,
     releaseAfterRetiredDays: 30,
     requireOfflineAccess: true,

@@ -9,10 +9,15 @@ import {
 } from '@vendure/core';
 import { createHash } from 'node:crypto';
 import { loggerCtx, MP_PLUGIN_OPTIONS } from '../constants';
+import { MercadoPagoAccount } from '../entities/mercadopago-account.entity';
 import { STOREFRONT_URL_FIELD } from '../custom-fields';
 import { toMercadoPagoAmount } from '../lib/amounts';
 import type { ResolvedMercadoPagoOptions } from '../types';
-import { MercadoPagoNotConnectedError, MercadoPagoConnectionService } from './connection.service';
+import {
+  MercadoPagoAccountRevokedError,
+  MercadoPagoConnectionService,
+  MercadoPagoNotConnectedError,
+} from './connection.service';
 import { MercadoPagoApiError, MercadoPagoApiService } from './mercadopago-api.service';
 import { MercadoPagoPreferenceRegistry } from './preference-registry.service';
 
@@ -106,10 +111,10 @@ export class MercadoPagoCheckoutService {
     this.assertBackUrls(ctx.channel, urls);
 
     const link = await this.connections.findActiveLink(ctx.channelId);
-    let accessToken: string;
+    let account: MercadoPagoAccount;
     try {
       if (!link) throw new MercadoPagoNotConnectedError();
-      ({ accessToken } = await this.connections.getAccountToken(link.account));
+      ({ account } = await this.connections.getAccountToken(link.account));
     } catch (error) {
       if (error instanceof MercadoPagoNotConnectedError) {
         throw new CheckoutError('NOT_CONNECTED', 'This store cannot take payments right now.');
@@ -168,7 +173,11 @@ export class MercadoPagoCheckoutService {
     };
 
     try {
-      const preference = await this.api.createPreference(accessToken, body, idempotencyKey);
+      // A 401 is a suspected revocation: it is checked, and the call repeated once if the token
+      // could be renewed, so the buyer does not notice (PRD 9.4).
+      const { value: preference } = await this.connections.withAccountToken(account, (token) =>
+        this.api.createPreference(token, body, idempotencyKey),
+      );
       await this.registry.setPreferenceId(issued.id, preference.id);
       return {
         preferenceId: preference.id,
@@ -177,6 +186,14 @@ export class MercadoPagoCheckoutService {
         expiresAt,
       };
     } catch (error) {
+      if (error instanceof MercadoPagoAccountRevokedError) {
+        // The account lost its access and its links are already retired: say so, not "try again".
+        Logger.warn(`Preference creation for order ${order.code}: ${error.message}`, loggerCtx);
+        throw new CheckoutError(
+          'NOT_CONNECTED',
+          'This store cannot take payments with Mercado Pago at the moment.',
+        );
+      }
       if (error instanceof MercadoPagoApiError) {
         Logger.warn(
           `Preference creation failed for order ${order.code}: ${error.kind} ${error.message}`,

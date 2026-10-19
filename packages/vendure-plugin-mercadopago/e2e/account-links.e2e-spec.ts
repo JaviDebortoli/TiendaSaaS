@@ -518,21 +518,23 @@ describe('the collector must be the account the payment was read with (PRD 9.7)'
         expect(reasons()).toEqual([reason]);
       });
 
-      it('does not let a buyer settle the order through addPaymentToOrder', async () => {
+      it('does not let a buyer settle the order through addPaymentToOrder, and asks Mercado Pago nothing', async () => {
         await connections.link(storeA.channelId, gx);
         const order = await checkoutAsGuest(shopClient, storeA, payableA);
         const payment = pay(order, gx, overrides());
+        mp.requests = [];
 
-        const { addPaymentToOrder } = await shopClient.query(ADD_PAYMENT, {
-          input: { method: 'mercado-pago', metadata: { mpPaymentId: String(payment.id) } },
-        });
+        await expect(
+          shopClient.query(ADD_PAYMENT, {
+            input: { method: 'mercado-pago', metadata: { mpPaymentId: String(payment.id) } },
+          }),
+        ).rejects.toThrow(/payment processor/);
 
-        expect(addPaymentToOrder.errorCode).toBe('PAYMENT_FAILED_ERROR');
+        // Refused before anything else: no request, no claim, no review, nothing on the order.
+        expect(mp.requests).toHaveLength(0);
         expect(await stateOf(storeA, order.code)).toBe('ArrangingPayment');
-        expect((await claims().findOneByOrFail({ mpPaymentId: String(payment.id) })).status).toBe(
-          'needs_review',
-        );
-        expect(reasons()).toEqual([reason]);
+        expect(await claims().findOneBy({ mpPaymentId: String(payment.id) })).toBeNull();
+        expect(reasons()).toEqual([]);
       });
 
       it('only refuses to settle: a pending payment with that problem is recorded as always', async () => {

@@ -1,6 +1,11 @@
 import { EventBus, TransactionalConnection } from '@vendure/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { MP_PLUGIN_OPTIONS } from '../src/constants';
 import { MercadoPagoAttentionEvent, MercadoPagoConnectionService } from '../src';
+import { MercadoPagoAccount } from '../src/entities/mercadopago-account.entity';
+import { MercadoPagoChannelLink } from '../src/entities/mercadopago-channel-link.entity';
+import { MercadoPagoApiService } from '../src/services/mercadopago-api.service';
+import { MercadoPagoCipherService } from '../src/services/cipher.service';
 import { MercadoPagoPaymentClaim } from '../src/entities/mercadopago-payment-claim.entity';
 import { AccountAlreadyLinkedError } from '../src/services/connection.service';
 import { MercadoPagoPaymentProcessor } from '../src/services/payment-processor.service';
@@ -160,5 +165,116 @@ suite('concurrency on PostgreSQL (PRD 12, 16.7)', () => {
     expect(active).toHaveLength(1);
     // Put the store back on its original account for any later test.
     await connections.link(store.channelId, grant);
+  });
+
+  describe('renewing and checking an account from two processes (PRD 9.4)', () => {
+    // An account and a store of their own: the race above leaves no say in who holds 9002.
+    const OWNER = 9100;
+    let lockStore: TestStore;
+    const grants = (n: number): OAuthGrant => ({
+      access_token: `APP_USR-lock-${n}`,
+      refresh_token: `TG-lock-${n}`,
+      user_id: OWNER,
+      expires_in: 15552000,
+      scope: 'offline_access',
+    });
+
+    /** What a second server or worker would be: its own service over the same database. */
+    const otherProcess = () =>
+      new MercadoPagoConnectionService(
+        server.app.get(TransactionalConnection),
+        server.app.get(MercadoPagoCipherService),
+        server.app.get(MercadoPagoApiService),
+        server.app.get(EventBus),
+        server.app.get(MP_PLUGIN_OPTIONS),
+      );
+    const connection = () => server.app.get(TransactionalConnection).rawConnection;
+    const accountRow = () =>
+      connection()
+        .getRepository(MercadoPagoAccount)
+        .findOneByOrFail({ mpUserId: String(OWNER) });
+    const links = async () =>
+      (
+        await connection()
+          .getRepository(MercadoPagoChannelLink)
+          .find({ where: { accountId: (await accountRow()).id } })
+      ).map((l) => l.status);
+
+    beforeAll(async () => {
+      lockStore = await createStore(adminClient, 'cc-lock', { storefrontUrl: STOREFRONT_URL });
+      await connections.link(lockStore.channelId, grants(1));
+    });
+
+    it('two processes renewing the same account at once spend the refresh token once and revoke nothing', async () => {
+      const second = otherProcess();
+      const { id } = await accountRow();
+      mp.singleUseRefreshTokens = true;
+      mp.oauthDelayMs = 150;
+      mp.refreshGrants.set(grants(1).refresh_token, grants(2));
+      mp.requests = [];
+      events.length = 0;
+
+      const results = await Promise.allSettled([connections.refresh(id), second.refresh(id)]);
+
+      expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+      expect(mp.requestsTo('POST', '/oauth/token')).toHaveLength(1);
+      expect((await accountRow()).status).toBe('connected');
+      expect(await links()).toEqual(['active']);
+      expect(events).toHaveLength(0);
+    });
+
+    it('a 401 with a token another process already replaced retires nothing', async () => {
+      const stale = await accountRow(); // holds grants(2)
+      const other = otherProcess();
+      mp.singleUseRefreshTokens = true;
+      mp.refreshGrants.set(grants(2).refresh_token, grants(3));
+      await other.refresh(stale.id); // the other process renews: grants(3) is stored now
+      mp.validTokens.add(grants(3).access_token);
+      mp.rejectedTokens.set(grants(2).access_token, 401);
+      mp.addPayment({
+        id: 4242,
+        status: 'approved',
+        transaction_amount: 1,
+        currency_id: 'ARS',
+        external_reference: 'x',
+        ownerToken: grants(3).access_token,
+        collector_id: OWNER,
+      });
+      mp.requests = [];
+      events.length = 0;
+
+      // This process still has the old row: it reads with the old token and gets the 401.
+      const { value, account } = await connections.withAccountToken(stale, (token) =>
+        server.app.get(MercadoPagoApiService).getPayment(token, '4242'),
+      );
+
+      expect(value.id).toBe(4242);
+      expect(account.accessToken).not.toBe(stale.accessToken);
+      expect(mp.requestsTo('GET', '/users/me')).toHaveLength(0);
+      expect(mp.requestsTo('POST', '/oauth/token')).toHaveLength(0);
+      expect((await accountRow()).status).toBe('connected');
+      expect(await links()).toEqual(['active']);
+      expect(events).toHaveLength(0);
+    });
+
+    it('a rejected refresh token under the lock is the only thing that revokes', async () => {
+      const second = otherProcess();
+      const row = await accountRow();
+      mp.rejectedTokens.set(grants(3).access_token, 401);
+      mp.validTokens.delete(grants(3).access_token);
+      mp.refreshGrants.clear(); // Mercado Pago refuses the refresh token now
+      mp.requests = [];
+      events.length = 0;
+
+      const verdicts = await Promise.all([
+        connections.verifyAccess(row.id, grants(3).access_token),
+        second.verifyAccess(row.id, grants(3).access_token),
+      ]);
+
+      expect(verdicts.map((v) => v.kind).sort()).toEqual(['no_tokens', 'revoked']);
+      expect((await accountRow()).status).toBe('disconnected');
+      expect(await links()).toEqual(['retired']);
+      expect(events.map((e) => e.reason)).toEqual(['account_disconnected']);
+    });
   });
 });

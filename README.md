@@ -95,6 +95,10 @@ Antes hay que registrar la aplicación de Mercado Pago y configurar la plataform
 paso a paso (aplicación, URL de OAuth con PKCE, webhooks, cuentas de prueba, túnel HTTPS).
 El sistema renueva solo los tokens (tarea diaria) y avisa por email si no puede.
 
+**Desarrollo y pruebas tienen que usar otra aplicación de Mercado Pago**, nunca la de producción. Una
+autorización hecha desde otro entorno puede anular los tokens de producción (V20) y dejar a un local
+desvinculado.
+
 ### Cambiar de cuenta
 
 El dueño abre Ajustes › Mercado Pago, pulsa **Vincular otra cuenta** y autoriza con la cuenta nueva. La
@@ -124,6 +128,10 @@ nada). Si el titular **revoca** el acceso desde Mercado Pago y la plataforma lo 
 Pago, la cuenta queda desconectada y se retira del local: otro local puede vincularla, y el local
 original, volver a autorizarla (si nadie la tomó antes) para reactivar su vínculo. Una renovación que
 falla no es una revocación: la cuenta sigue vinculada y bloqueada para otros hasta que se resuelva.
+Lo mismo vale si Mercado Pago rechaza el token (401) en medio de una compra, un reembolso o una lectura de pago:
+es una revocación **sospechada**. El sistema la verifica una sola vez por cuenta (con una pausa de
+`MP_AUTH_CHECK_PAUSE_MINUTES`, 5 por defecto) y, si logra renovar el token, repite la operación y el
+comprador no se entera; solo retira la cuenta si Mercado Pago rechaza también la renovación.
 Mientras la cuenta revocada no vuelva a autorizarse, los reembolsos de sus ventas se hacen desde el
 panel de Mercado Pago.
 
@@ -197,16 +205,16 @@ par de funciones.
 
 Todas están en `.env.example` salvo las marcadas con ★, que son opcionales y todavía no figuran allí.
 
-| Grupo          | Variables                                                                                                                                                                                                                                                              |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| General        | `APP_ENV` (`dev`\|`prod`), `PUBLIC_URL`, `PORT`, `COOKIE_SECRET`, `CORS_ORIGINS`, `TRUST_PROXY`, `PLATFORM_NAME` ★, `PLATFORM_ALERT_EMAIL` ★                                                                                                                           |
-| Base de datos  | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `DB_SYNCHRONIZE` (solo desarrollo)                                                                                                                                                                      |
-| Superadmin     | `SUPERADMIN_USERNAME`, `SUPERADMIN_PASSWORD`                                                                                                                                                                                                                           |
-| Mercado Pago   | `MP_CLIENT_ID`, `MP_CLIENT_SECRET`, `MP_WEBHOOK_SECRET`, `MP_REDIRECT_URI`, `MP_TOKEN_ENCRYPTION_KEY`, `MP_WEBHOOK_MODE`, `MP_OAUTH_TEST_TOKEN`, `MP_WEBHOOK_TOLERANCE_SECONDS`, `MP_PREFERENCE_TTL_MINUTES`, `MP_DASHBOARD_URL`                                       |
-| Mercado Pago ★ | `MP_RELEASE_AFTER_LAST_PAYMENT_DAYS` (180), `MP_RELEASE_AFTER_RETIRED_DAYS` (30), `MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE`, `MP_PREFERENCE_ITEMS_MODE` (`lines`\|`total`), `MP_REQUIRE_OFFLINE_ACCESS`, `MP_AUTH_URL`, `MP_ALLOW_INSECURE_RETURN_URLS` (solo pruebas) |
-| Almacenamiento | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION`, `S3_FORCE_PATH_STYLE`, `ASSET_URL_PREFIX`                                                                                                                                                   |
-| Email          | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`                                                                                                                                                                                                   |
-| Tienda         | `VENDURE_SHOP_API_URL`, `VENDURE_CHANNEL_TOKEN`, `STOREFRONT_PUBLIC_URL`, `STORE_NAME` ★, `PAYMENT_SYNC_AFTER_MS` ★                                                                                                                                                    |
+| Grupo          | Variables                                                                                                                                                                                                                                                                                                 |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| General        | `APP_ENV` (`dev`\|`prod`), `PUBLIC_URL`, `PORT`, `COOKIE_SECRET`, `CORS_ORIGINS`, `TRUST_PROXY`, `PLATFORM_NAME` ★, `PLATFORM_ALERT_EMAIL` ★                                                                                                                                                              |
+| Base de datos  | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `DB_SYNCHRONIZE` (solo desarrollo)                                                                                                                                                                                                         |
+| Superadmin     | `SUPERADMIN_USERNAME`, `SUPERADMIN_PASSWORD`                                                                                                                                                                                                                                                              |
+| Mercado Pago   | `MP_CLIENT_ID`, `MP_CLIENT_SECRET`, `MP_WEBHOOK_SECRET`, `MP_REDIRECT_URI`, `MP_TOKEN_ENCRYPTION_KEY`, `MP_WEBHOOK_MODE`, `MP_OAUTH_TEST_TOKEN`, `MP_WEBHOOK_TOLERANCE_SECONDS`, `MP_PREFERENCE_TTL_MINUTES`, `MP_DASHBOARD_URL`                                                                          |
+| Mercado Pago ★ | `MP_RELEASE_AFTER_LAST_PAYMENT_DAYS` (180), `MP_RELEASE_AFTER_RETIRED_DAYS` (30), `MP_AUTH_CHECK_PAUSE_MINUTES` (5), `MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE`, `MP_PREFERENCE_ITEMS_MODE` (`lines`\|`total`), `MP_REQUIRE_OFFLINE_ACCESS`, `MP_AUTH_URL`, `MP_ALLOW_INSECURE_RETURN_URLS` (solo pruebas) |
+| Almacenamiento | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION`, `S3_FORCE_PATH_STYLE`, `ASSET_URL_PREFIX`                                                                                                                                                                                      |
+| Email          | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`                                                                                                                                                                                                                                      |
+| Tienda         | `VENDURE_SHOP_API_URL`, `VENDURE_CHANNEL_TOKEN`, `STOREFRONT_PUBLIC_URL`, `STORE_NAME` ★, `PAYMENT_SYNC_AFTER_MS` ★                                                                                                                                                                                       |
 
 Ningún secreto va al repositorio. Los de Mercado Pago solo existen en el servidor.
 
@@ -233,5 +241,5 @@ Las reglas que no se negocian, y dónde se prueban:
 
 ## Para seguir
 
-- [ ] Registrar la aplicación de Mercado Pago y recorrer [`VERIFICATION.md`](VERIFICATION.md): **V19 primero** (si los identificadores de la cuenta no coinciden hay que rediseñar una regla), después **V21 y V22** (de ellos depende que un pago pueda liquidar un pedido) y luego V1, V2, V6, V7, V12–V18, V20 y V23.
+- [ ] Registrar la aplicación de Mercado Pago y recorrer [`VERIFICATION.md`](VERIFICATION.md): **V19 primero** (si los identificadores de la cuenta no coinciden hay que rediseñar una regla), después **V21 y V22** (de ellos depende que un pago pueda liquidar un pedido) y luego V1, V2, V6, V7, V12–V18, V20 con V24, y V23.
 - [ ] Decidir hosting, proveedor S3, SMTP, dominios y titularidad de la aplicación (PRD 16.9): [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).

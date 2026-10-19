@@ -240,14 +240,15 @@ describe('a payment from a preference issued for another order', () => {
     // The buyer now has another order and tries to settle it with that payment.
     const mine = await checkoutAsGuest(shopClient, storeA, payableA);
 
-    const { addPaymentToOrder } = await shopClient.query(ADD_PAYMENT, {
-      input: { method: 'mercado-pago', metadata: { mpPaymentId: String(payment.id) } },
-    });
+    await expect(
+      shopClient.query(ADD_PAYMENT, {
+        input: { method: 'mercado-pago', metadata: { mpPaymentId: String(payment.id) } },
+      }),
+    ).rejects.toThrow(/payment processor/);
 
-    expect(addPaymentToOrder.errorCode).toBe('PAYMENT_FAILED_ERROR');
     expect(await stateOf(storeA, mine.code)).toBe('ArrangingPayment');
     expect(await stateOf(storeA, other.code)).toBe('ArrangingPayment');
-    expect(reasons()).toEqual(['unknown_preference']);
+    expect(reasons()).toEqual([]);
   });
 });
 
@@ -479,7 +480,27 @@ describe('the sync mutation (PRD 9.6 step 6)', () => {
 });
 
 describe('the handler (addPaymentToOrder)', () => {
-  it('settles a payment from a preference issued for the order', async () => {
+  it('refuses a payment from a preference issued for the order when a buyer sends it', async () => {
+    await connections.link(storeA.channelId, gx);
+    const order = await checkoutAsGuest(shopClient, storeA, payableA);
+    const issued = issuedFor(order);
+    const payment = pay(order, gx, {
+      external_reference: issued.externalReference,
+      preferenceId: issued.preferenceId,
+    });
+    mp.requests = [];
+
+    await expect(
+      shopClient.query(ADD_PAYMENT, {
+        input: { method: 'mercado-pago', metadata: { mpPaymentId: String(payment.id) } },
+      }),
+    ).rejects.toThrow(/payment processor/);
+
+    expect(mp.requests).toHaveLength(0);
+    expect(await stateOf(storeA, order.code)).toBe('ArrangingPayment');
+  });
+
+  it('still settles the same payment when the processor handles it', async () => {
     await connections.link(storeA.channelId, gx);
     const order = await checkoutAsGuest(shopClient, storeA, payableA);
     const issued = issuedFor(order);
@@ -488,24 +509,9 @@ describe('the handler (addPaymentToOrder)', () => {
       preferenceId: issued.preferenceId,
     });
 
-    const { addPaymentToOrder } = await shopClient.query(ADD_PAYMENT, {
-      input: { method: 'mercado-pago', metadata: { mpPaymentId: String(payment.id) } },
+    expect(await notify(payment, X)).toMatchObject({
+      outcome: 'settled',
+      orderState: 'PaymentSettled',
     });
-
-    expect(addPaymentToOrder).toMatchObject({ __typename: 'Order', state: 'PaymentSettled' });
-  });
-
-  it('refuses an order no preference was issued for', async () => {
-    await connections.link(storeA.channelId, gx);
-    const order = await checkoutAsGuest(shopClient, storeA, payableA);
-    await repo(MercadoPagoPreference).createQueryBuilder().delete().execute();
-    const payment = pay(order, gx, { external_reference: order.code, preferenceId: 'pref-x' });
-
-    const { addPaymentToOrder } = await shopClient.query(ADD_PAYMENT, {
-      input: { method: 'mercado-pago', metadata: { mpPaymentId: String(payment.id) } },
-    });
-
-    expect(addPaymentToOrder.errorCode).toBe('PAYMENT_FAILED_ERROR');
-    expect(await stateOf(storeA, order.code)).toBe('ArrangingPayment');
   });
 });

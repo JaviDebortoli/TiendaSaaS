@@ -25,7 +25,11 @@ import { isUniqueViolation } from '../lib/db';
 import { runAsSettlement } from '../settlement-scope';
 import { validatePaymentAgainstOrder } from '../lib/payment-validation';
 import { mapPaymentStatus, PaymentOutcome } from '../lib/status';
-import { MercadoPagoConnectionService, MercadoPagoNotConnectedError } from './connection.service';
+import {
+  MercadoPagoAccountRevokedError,
+  MercadoPagoConnectionService,
+  MercadoPagoNotConnectedError,
+} from './connection.service';
 import { MercadoPagoPayment } from './mercadopago-api.service';
 import { MercadoPagoPaymentOperations } from './payment-operations.service';
 import { MercadoPagoPreferenceRegistry } from './preference-registry.service';
@@ -123,6 +127,10 @@ export class MercadoPagoPaymentProcessor {
     } catch (error) {
       if (error instanceof MercadoPagoNotConnectedError) {
         Logger.warn(`Payment ${input.mpPaymentId}: ${error.message}`, loggerCtx);
+        // The access was just found revoked: an approved payment may be waiting unsettled.
+        if (error instanceof MercadoPagoAccountRevokedError) {
+          await this.alertRevoked(input, origin.account, origin.expected);
+        }
         return { outcome: 'ignored', reason: 'not_connected' };
       }
       throw error;
@@ -204,7 +212,14 @@ export class MercadoPagoPaymentProcessor {
       await this.record(ctx, order, payment, outcome);
       return { outcome, orderCode: order.code, orderState: order.state };
     }
-    return this.settle(ctx, order, payment, account, entry, link);
+    try {
+      return await this.settle(ctx, order, payment, account, entry, link);
+    } catch (error) {
+      // Reading the merchant order found the access revoked: the payment cannot be checked.
+      if (!(error instanceof MercadoPagoAccountRevokedError)) throw error;
+      await this.alertRevoked(input, account, entry ?? undefined);
+      return { outcome: 'ignored', reason: 'not_connected' };
+    }
   }
 
   /**
@@ -215,7 +230,13 @@ export class MercadoPagoPaymentProcessor {
   async cancelPending(ctx: RequestContext, mpPaymentId: string): Promise<void> {
     if (!PAYMENT_ID_PATTERN.test(mpPaymentId)) throw new UserInputError('Invalid payment id.');
     const accounts = await this.connections.accountsForChannel(ctx.channelId);
-    const found = await this.operations.findPayment(accounts, mpPaymentId);
+    let found: Awaited<ReturnType<MercadoPagoPaymentOperations['findPayment']>>;
+    try {
+      found = await this.operations.findPayment(accounts, mpPaymentId);
+    } catch (error) {
+      if (error instanceof MercadoPagoAccountRevokedError) throw new UserInputError(error.message);
+      throw error;
+    }
     if (!found) throw new UserInputError('Payment not found.');
     if (!found.collector.ok) {
       throw new UserInputError('The payment was not collected by an account of this store.');
@@ -300,24 +321,45 @@ export class MercadoPagoPaymentProcessor {
     return { account };
   }
 
+  /**
+   * The access of the account was just found revoked while reading a payment: an approved payment
+   * may be waiting unsettled. The store of the preference is told, or every store that uses the
+   * account when only its `user_id` is known, and so is the platform.
+   */
+  private async alertRevoked(
+    input: ProcessInput,
+    account: MercadoPagoAccount,
+    expected?: MercadoPagoPreference,
+  ): Promise<void> {
+    const channelIds = expected
+      ? [expected.channelId]
+      : await this.connections.channelIdsOfAccount(account.id);
+    this.alertUnverifiable(input, account.mpUserId, true, channelIds);
+  }
+
   private alertUnverifiable(
     input: ProcessInput,
     mpUserId: string | undefined,
     known: boolean,
+    channelIds: ID[] = [],
   ): void {
     Logger.warn(
       `Notification for payment ${input.mpPaymentId} ignored: ${known ? 'the account has no tokens left' : 'no account matches the seller'}.`,
       loggerCtx,
     );
-    this.eventBus.publish(
-      new MercadoPagoAttentionEvent('unverifiable_payment', null, {
-        mpPaymentId: input.mpPaymentId,
-        mpUserId,
-        message: known
-          ? `A notification arrived for payment ${input.mpPaymentId} of account ${mpUserId}, which has no tokens left, so it could not be checked.`
-          : `A notification arrived for payment ${input.mpPaymentId} of seller ${mpUserId ?? '(unknown)'}, which is not a known account, so it could not be checked.`,
-      }),
-    );
+    const details = {
+      mpPaymentId: input.mpPaymentId,
+      mpUserId,
+      message: known
+        ? `A notification arrived for payment ${input.mpPaymentId} of account ${mpUserId}, which has no tokens left, so it could not be checked.`
+        : `A notification arrived for payment ${input.mpPaymentId} of seller ${mpUserId ?? '(unknown)'}, which is not a known account, so it could not be checked.`,
+    };
+    // Without a store to tell, the event is for the platform alone.
+    for (const channelId of channelIds.length > 0 ? channelIds : [null]) {
+      this.eventBus.publish(
+        new MercadoPagoAttentionEvent('unverifiable_payment', channelId, details),
+      );
+    }
   }
 
   /** The store (non-default channel) an order belongs to, wherever it was placed. */
@@ -398,16 +440,24 @@ export class MercadoPagoPaymentProcessor {
 
     try {
       // Vendure 3.8 requires a transaction around addPaymentToOrder.
-      const result = await runAsSettlement(order.id, () =>
-        this.connection.withTransaction(ctx, async (txCtx) => {
-          // Payments of the same order are applied one at a time, so two different approved
-          // payments racing for one order cannot both be added.
-          await this.lockOrder(txCtx, order.id);
-          return this.orderService.addPaymentToOrder(txCtx, order.id, {
-            method: methodCode,
-            metadata: { mpPaymentId },
-          });
-        }),
+      const result = await runAsSettlement(
+        {
+          orderId: order.id,
+          mpPaymentId,
+          payment,
+          account,
+          externalReference: entry!.externalReference,
+        },
+        () =>
+          this.connection.withTransaction(ctx, async (txCtx) => {
+            // Payments of the same order are applied one at a time, so two different approved
+            // payments racing for one order cannot both be added.
+            await this.lockOrder(txCtx, order.id);
+            return this.orderService.addPaymentToOrder(txCtx, order.id, {
+              method: methodCode,
+              metadata: { mpPaymentId },
+            });
+          }),
       );
       if ('errorCode' in result) {
         await this.setClaimStatus(mpPaymentId, 'recorded');

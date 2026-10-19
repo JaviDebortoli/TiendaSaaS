@@ -1,11 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { Order, RequestContext } from '@vendure/core';
+import { RequestContext } from '@vendure/core';
 import { MercadoPagoAccount } from '../entities/mercadopago-account.entity';
 import { MercadoPagoPreference } from '../entities/mercadopago-preference.entity';
 import { toMercadoPagoAmount } from '../lib/amounts';
 import { CollectorCheck, checkCollector } from '../lib/collector';
-import { validatePaymentAgainstOrder } from '../lib/payment-validation';
-import { MercadoPagoConnectionService, MercadoPagoNotConnectedError } from './connection.service';
+import {
+  MercadoPagoAccountRevokedError,
+  MercadoPagoConnectionService,
+  MercadoPagoNotConnectedError,
+} from './connection.service';
 import {
   MercadoPagoApiError,
   MercadoPagoApiService,
@@ -20,10 +23,6 @@ export interface FoundPayment {
   account: MercadoPagoAccount;
   collector: CollectorCheck;
 }
-
-export type VerifyResult =
-  | { ok: true; payment: MercadoPagoPayment; account: MercadoPagoAccount }
-  | { ok: false; message: string };
 
 /** Why a payment may not settle an order, and the evidence the review note keeps. */
 export type IssuanceCheck =
@@ -53,15 +52,18 @@ export class MercadoPagoPaymentOperations {
   /**
    * Reads one payment with the token of one account. Null when that account does not see it. The
    * account returned is the one whose token was used: if it had to be renewed first, the renewed
-   * row, so the next call does not renew it again.
+   * row, so the next call does not renew it again. A 401 is a suspected revocation
+   * (`withAccountToken`): `MercadoPagoAccountRevokedError` when it is confirmed.
    */
   async readPayment(
     account: MercadoPagoAccount,
     mpPaymentId: string,
   ): Promise<{ payment: MercadoPagoPayment; account: MercadoPagoAccount } | null> {
-    const { account: current, accessToken } = await this.connections.getAccountToken(account);
     try {
-      return { payment: await this.api.getPayment(accessToken, mpPaymentId), account: current };
+      const { value, account: used } = await this.connections.withAccountToken(account, (token) =>
+        this.api.getPayment(token, mpPaymentId),
+      );
+      return { payment: value, account: used };
     } catch (error) {
       if (error instanceof MercadoPagoApiError && error.kind === 'not_found') return null;
       throw error;
@@ -80,9 +82,10 @@ export class MercadoPagoPaymentOperations {
   ): Promise<string | undefined> {
     const orderId = payment.order?.id;
     if (orderId === undefined || orderId === null) return undefined;
-    const { accessToken } = await this.connections.getAccountToken(account);
     try {
-      const merchantOrder = await this.api.getMerchantOrder(accessToken, String(orderId));
+      const { value: merchantOrder } = await this.connections.withAccountToken(account, (token) =>
+        this.api.getMerchantOrder(token, String(orderId)),
+      );
       return merchantOrder.preference_id || undefined;
     } catch (error) {
       if (
@@ -173,22 +176,24 @@ export class MercadoPagoPaymentOperations {
   ): Promise<FoundPayment | null> {
     let first: FoundPayment | undefined;
     let authError: MercadoPagoApiError | undefined;
+    let revoked: MercadoPagoAccountRevokedError | undefined;
     let tried = 0;
     for (const candidate of candidates) {
       if (!this.connections.hasTokens(candidate)) continue;
-      let account: MercadoPagoAccount;
-      let accessToken: string;
+      let read: { payment: MercadoPagoPayment; account: MercadoPagoAccount };
       try {
-        ({ account, accessToken } = await this.connections.getAccountToken(candidate));
+        const { value, account } = await this.connections.withAccountToken(candidate, (token) =>
+          this.api.getPayment(token, mpPaymentId),
+        );
+        read = { payment: value, account };
       } catch (error) {
+        // An account that cannot act any more is skipped, like one without tokens.
+        if (error instanceof MercadoPagoAccountRevokedError) {
+          revoked ??= error;
+          continue;
+        }
         if (error instanceof MercadoPagoNotConnectedError) continue;
-        throw error;
-      }
-      tried++;
-      let payment: MercadoPagoPayment;
-      try {
-        payment = await this.api.getPayment(accessToken, mpPaymentId);
-      } catch (error) {
+        tried++;
         if (error instanceof MercadoPagoApiError && error.kind === 'not_found') continue;
         if (error instanceof MercadoPagoApiError && error.kind === 'auth') {
           authError ??= error;
@@ -196,105 +201,17 @@ export class MercadoPagoPaymentOperations {
         }
         throw error;
       }
+      tried++;
+      const { payment, account } = read;
       const found = { payment, account, collector: checkCollector(payment, account.mpUserId) };
       if (found.collector.ok) return found;
       first ??= found;
     }
     if (first) return first;
+    if (revoked) throw revoked;
     if (tried === 0) throw new MercadoPagoNotConnectedError();
     if (authError) throw authError;
     return null;
-  }
-
-  /**
-   * Independent proof that a payment is real, approved, issued for this order and covers it. The
-   * handler runs it on every `addPaymentToOrder`, so a buyer cannot settle an order through the
-   * public Shop API by sending an arbitrary `mpPaymentId`: only a payment that Mercado Pago itself
-   * reports as approved, that belongs to a preference the platform issued for this order and was
-   * collected by that preference's account, is accepted (PRD 9.5, 9.7).
-   *
-   * The accounts tried are the ones the platform issued preferences with for this order, in any
-   * state of their link: by the time this runs a payment of a released link that still has tokens
-   * is honoured and reported rather than lost.
-   */
-  async verifyApproved(
-    ctx: RequestContext,
-    order: Order,
-    mpPaymentId: string,
-    amount: number,
-  ): Promise<VerifyResult> {
-    let found: FoundPayment | null;
-    let entry: MercadoPagoPreference | null;
-    try {
-      const issued = await this.registry.listForOrder(order.code);
-      const accounts = [
-        ...new Map(issued.map((row) => [String(row.accountId), row.account])).values(),
-      ];
-      if (accounts.length === 0) {
-        return { ok: false, message: 'No Mercado Pago preference was issued for this order.' };
-      }
-      found = await this.findPayment(accounts, mpPaymentId);
-      entry = found?.payment.external_reference
-        ? await this.registry.findByExternalReference(found.payment.external_reference)
-        : null;
-    } catch (error) {
-      return { ok: false, message: this.describe(error, 'Could not verify the payment') };
-    }
-    if (!found) {
-      return { ok: false, message: 'Could not verify the payment: Payment not found' };
-    }
-    const { payment, account } = found;
-    if (payment.status !== 'approved') {
-      return {
-        ok: false,
-        message: `The Mercado Pago payment is ${payment.status ?? 'unknown'}, not approved.`,
-      };
-    }
-    let issuance: IssuanceCheck;
-    try {
-      issuance = await this.checkIssuance({ payment, account, entry, orderCode: order.code });
-    } catch (error) {
-      return { ok: false, message: this.describe(error, 'Could not verify the payment') };
-    }
-    if (!issuance.ok) {
-      await this.reviews.markNeedsReview(
-        ctx,
-        order,
-        mpPaymentId,
-        issuance.reason,
-        issuance.detail,
-        issuance.observed,
-      );
-      return { ok: false, message: this.issuanceMessage(issuance.reason) };
-    }
-    const validation = validatePaymentAgainstOrder(payment, {
-      externalReference: entry!.externalReference,
-      totalWithTax: order.totalWithTax,
-      currencyCode: order.currencyCode,
-    });
-    if (!validation.ok) {
-      return {
-        ok: false,
-        message: `The Mercado Pago payment does not match the order (${validation.reason}).`,
-      };
-    }
-    if (amount !== order.totalWithTax) {
-      return { ok: false, message: 'Partial payments are not supported for Mercado Pago.' };
-    }
-    return { ok: true, payment, account };
-  }
-
-  private issuanceMessage(reason: ReviewReason): string {
-    switch (reason) {
-      case 'collector_missing':
-        return 'Mercado Pago did not say which account collected the payment.';
-      case 'collector_mismatch':
-        return 'The payment was collected by a different Mercado Pago account.';
-      case 'preference_mismatch':
-        return 'The payment belongs to another Mercado Pago preference than the one issued for the order.';
-      default:
-        return 'The payment does not belong to a Mercado Pago preference issued for this order.';
-    }
   }
 
   /** Cancels a payment that is still `pending` or `in_process` (PRD 9.9). */
@@ -306,10 +223,14 @@ export class MercadoPagoPaymentOperations {
     const resolved = await this.accountForPayment(ctx, mpAccountUserId);
     if (!resolved.ok) return resolved;
     try {
-      const { accessToken } = await this.connections.getAccountToken(resolved.account);
-      await this.api.cancelPayment(accessToken, mpPaymentId);
+      await this.connections.withAccountToken(resolved.account, (token) =>
+        this.api.cancelPayment(token, mpPaymentId),
+      );
       return { ok: true };
     } catch (error) {
+      if (error instanceof MercadoPagoAccountRevokedError) {
+        return { ok: false, message: accountNotLinkedMessage(resolved.account.mpUserId) };
+      }
       return {
         ok: false,
         message: this.describe(error, 'Mercado Pago could not cancel the payment'),
@@ -332,16 +253,20 @@ export class MercadoPagoPaymentOperations {
     const resolved = await this.accountForPayment(ctx, mpAccountUserId);
     if (!resolved.ok) return resolved;
     try {
-      const { accessToken } = await this.connections.getAccountToken(resolved.account);
       const full = amountMinorUnits === paymentAmountMinorUnits;
-      const { id } = await this.api.refundPayment(
-        accessToken,
-        mpPaymentId,
-        full ? undefined : toMercadoPagoAmount(amountMinorUnits),
-        idempotencyKey,
+      const { value } = await this.connections.withAccountToken(resolved.account, (token) =>
+        this.api.refundPayment(
+          token,
+          mpPaymentId,
+          full ? undefined : toMercadoPagoAmount(amountMinorUnits),
+          idempotencyKey,
+        ),
       );
-      return { ok: true, refundId: id };
+      return { ok: true, refundId: value.id };
     } catch (error) {
+      if (error instanceof MercadoPagoAccountRevokedError) {
+        return { ok: false, message: accountNotLinkedMessage(resolved.account.mpUserId) };
+      }
       return { ok: false, message: this.describe(error, 'Mercado Pago rejected the refund') };
     }
   }
