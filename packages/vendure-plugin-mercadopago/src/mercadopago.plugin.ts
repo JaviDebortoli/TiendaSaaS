@@ -24,9 +24,10 @@ import { MercadoPagoApiService } from './services/mercadopago-api.service';
 import { MercadoPagoOAuthService } from './services/oauth.service';
 import { MercadoPagoPaymentOperations } from './services/payment-operations.service';
 import { MercadoPagoPaymentProcessor } from './services/payment-processor.service';
+import { MercadoPagoReleaseService } from './services/release.service';
 import { MercadoPagoReviewService } from './services/review.service';
 import { MercadoPagoWebhookService } from './services/webhook.service';
-import { refreshConnectionsTask } from './tasks';
+import { refreshConnectionsTask, releaseLinksTask } from './tasks';
 import { MercadoPagoPluginOptions, resolveOptions, ResolvedMercadoPagoOptions } from './types';
 
 @VendurePlugin({
@@ -47,6 +48,7 @@ import { MercadoPagoPluginOptions, resolveOptions, ResolvedMercadoPagoOptions } 
     MercadoPagoPaymentProcessor,
     MercadoPagoPaymentOperations,
     MercadoPagoReviewService,
+    MercadoPagoReleaseService,
     MercadoPagoWebhookService,
   ],
   controllers: [MercadoPagoOAuthController, MercadoPagoWebhookController],
@@ -80,6 +82,7 @@ import { MercadoPagoPluginOptions, resolveOptions, ResolvedMercadoPagoOptions } 
     config.schedulerOptions.tasks = [
       ...(config.schedulerOptions.tasks ?? []),
       refreshConnectionsTask,
+      releaseLinksTask,
     ];
     return config;
   },

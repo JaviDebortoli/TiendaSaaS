@@ -26,7 +26,8 @@
     "verify": "npm run lint && npm run typecheck && npm run build && npm test && npm run test:e2e",
     "provision-store": "npm run provision-store -w @tiendasaas/server --",
     "seed-demo": "npm run seed-demo -w @tiendasaas/server",
-    "refresh-connections": "npm run refresh-connections -w @tiendasaas/server --"
+    "refresh-connections": "npm run refresh-connections -w @tiendasaas/server --",
+    "release-links": "npm run release-links -w @tiendasaas/server --"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",

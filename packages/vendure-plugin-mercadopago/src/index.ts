@@ -16,3 +16,4 @@ export type { LinkStatus } from './entities/mercadopago-channel-link.entity';
 export { MercadoPagoConnectionService } from './services/connection.service';
 // Also brings the typing of the Channel custom field into consumers.
 export { STOREFRONT_URL_FIELD } from './custom-fields';
+export { MercadoPagoReleaseService } from './services/release.service';

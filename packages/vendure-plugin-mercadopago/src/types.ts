@@ -42,6 +42,17 @@ export interface MercadoPagoPluginOptions {
   preferenceItemsMode?: PreferenceItemsMode;
   /** Renew connections that expire in fewer than this many days. Default 30 (PRD 9.4). */
   refreshWindowDays?: number;
+  /**
+   * A retired link is released only after this many days with no settled payment of that link
+   * (same store, same account). Mercado Pago lets a payment be refunded for 180 days, so by then
+   * nothing is left to refund with that account. Default 180 (PRD 9.4).
+   */
+  releaseAfterLastPaymentDays?: number;
+  /**
+   * ...and after this many days since the link was retired. From then on no preference is created
+   * with it and the payments left unconfirmed have expired (they last 30 days). Default 30.
+   */
+  releaseAfterRetiredDays?: number;
   /** Reject OAuth grants whose scope lacks `offline_access` (PRD 9.3). Default true. */
   requireOfflineAccess?: boolean;
   /** Authorization host. Default `https://auth.mercadopago.com`. */
@@ -56,6 +67,16 @@ export interface MercadoPagoPluginOptions {
 export type ResolvedMercadoPagoOptions = Required<MercadoPagoPluginOptions>;
 
 export function resolveOptions(options: MercadoPagoPluginOptions): ResolvedMercadoPagoOptions {
+  const resolved = resolveDefaults(options);
+  for (const key of ['releaseAfterLastPaymentDays', 'releaseAfterRetiredDays'] as const) {
+    if (!Number.isFinite(resolved[key]) || resolved[key] < 0) {
+      throw new Error(`Mercado Pago option ${key} must be a number of days, 0 or more.`);
+    }
+  }
+  return resolved;
+}
+
+function resolveDefaults(options: MercadoPagoPluginOptions): ResolvedMercadoPagoOptions {
   return {
     webhookMode: 'application',
     requireSignatureInPreferenceMode: true,
@@ -64,6 +85,8 @@ export function resolveOptions(options: MercadoPagoPluginOptions): ResolvedMerca
     preferenceTtlMinutes: 30,
     preferenceItemsMode: 'lines',
     refreshWindowDays: 30,
+    releaseAfterLastPaymentDays: 180,
+    releaseAfterRetiredDays: 30,
     requireOfflineAccess: true,
     authUrl: 'https://auth.mercadopago.com',
     allowInsecureReturnUrls: false,
