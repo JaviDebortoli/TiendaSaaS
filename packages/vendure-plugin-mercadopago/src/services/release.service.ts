@@ -182,23 +182,26 @@ export class MercadoPagoReleaseService {
       // A store linking this account right now holds its row: wait for it, so the count below
       // sees its new link and the tokens are not wiped under it (PostgreSQL only; SQL.js has one
       // connection and nothing to wait for).
+      let account = link.account;
       if (manager.connection.options.type === 'postgres') {
-        await manager
-          .getRepository(MercadoPagoAccount)
-          .createQueryBuilder('account')
-          .setLock('pessimistic_write')
-          .where('account.id = :id', { id: link.accountId })
-          .getOne();
+        // The row as it is once the lock is ours, not as it was read before waiting for it.
+        account =
+          (await manager
+            .getRepository(MercadoPagoAccount)
+            .createQueryBuilder('account')
+            .setLock('pessimistic_write')
+            .where('account.id = :id', { id: link.accountId })
+            .getOne()) ?? account;
       }
       const stillUsed = await links.count({
         where: { accountId: link.accountId, status: In(['active', 'retired']) },
       });
       if (stillUsed === 0) {
         const accounts = manager.getRepository(MercadoPagoAccount);
-        link.account.accessToken = '';
-        link.account.refreshToken = '';
-        link.account.status = 'released';
-        await accounts.save(link.account);
+        account.accessToken = '';
+        account.refreshToken = '';
+        account.status = 'released';
+        await accounts.save(account);
       }
       return { channelId: link.channelId, mpUserId: link.account.mpUserId };
     });
