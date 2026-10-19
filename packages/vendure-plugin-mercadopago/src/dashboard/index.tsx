@@ -13,7 +13,8 @@ import {
 /**
  * Dashboard page where the owner of a store links, checks and unlinks its Mercado Pago account
  * (PRD 5.4, 9.2). The tokens never reach this page: the server only says whether the account is
- * connected, and hands out the Mercado Pago authorization URL.
+ * connected, and hands out the Mercado Pago authorization URL. Accounts the store used before are
+ * listed too: their sales can still be refunded until the account is released.
  */
 
 const CONNECTION_QUERY = /* GraphQL */ `
@@ -25,6 +26,15 @@ const CONNECTION_QUERY = /* GraphQL */ `
       expiresAt
       scope
       lastError
+    }
+    mercadoPagoPreviousAccounts {
+      mpUserId
+      status
+      accountStatus
+      linkedAt
+      retiredAt
+      releasedAt
+      estimatedReleaseAt
     }
   }
 `;
@@ -46,6 +56,38 @@ interface ConnectionInfo {
   expiresAt: string | null;
   scope: string | null;
   lastError: string | null;
+}
+
+interface PreviousAccount {
+  mpUserId: string;
+  /** `retired` | `released` */
+  status: string;
+  accountStatus: string;
+  linkedAt: string;
+  retiredAt: string | null;
+  releasedAt: string | null;
+  estimatedReleaseAt: string | null;
+}
+
+/** Shown before the owner changes or unlinks the account (the refund period is 180 days). */
+const REVOKE_WARNING =
+  'No revoques el acceso de esta cuenta desde Mercado Pago durante 180 días. Si lo hacés, los reembolsos de las ventas cobradas en ella vas a tener que hacerlos desde el panel de Mercado Pago.';
+
+const formatDate = (value: string | null) =>
+  value ? new Date(value).toLocaleDateString('es-AR') : '';
+
+function previousAccountText(account: PreviousAccount): string {
+  if (account.status === 'released') {
+    return `Liberada el ${formatDate(account.releasedAt)}. Sus ventas ya no se pueden reembolsar desde acá.`;
+  }
+  const revoked =
+    account.accountStatus === 'disconnected'
+      ? ' Se revocó su acceso: los reembolsos hacelos desde el panel de Mercado Pago.'
+      : ' Sus ventas todavía se pueden reembolsar desde acá.';
+  const until = account.estimatedReleaseAt
+    ? ` Se liberará a partir del ${formatDate(account.estimatedReleaseAt)}, si no recibe más pagos.`
+    : '';
+  return `Dejó de usarse el ${formatDate(account.retiredAt)}.${revoked}${until}`;
 }
 
 const REASONS: Record<string, string> = {
@@ -84,9 +126,13 @@ function MercadoPagoPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['mercadoPagoConnection'],
     queryFn: () =>
-      api.query(CONNECTION_QUERY) as Promise<{ mercadoPagoConnection: ConnectionInfo | null }>,
+      api.query(CONNECTION_QUERY) as Promise<{
+        mercadoPagoConnection: ConnectionInfo | null;
+        mercadoPagoPreviousAccounts: PreviousAccount[];
+      }>,
   });
   const connection = data?.mercadoPagoConnection ?? null;
+  const previous = data?.mercadoPagoPreviousAccounts ?? [];
 
   const connect = useMutation({
     mutationFn: () =>
@@ -146,9 +192,28 @@ function MercadoPagoPage() {
                   Pago en esta tienda.
                 </p>
               )}
+              {connection && (
+                <p
+                  role="note"
+                  className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+                >
+                  {REVOKE_WARNING}
+                </p>
+              )}
               <div className="flex gap-3">
-                <Button onClick={() => connect.mutate()} disabled={connect.isPending}>
-                  {connection ? 'Volver a vincular' : 'Conectar Mercado Pago'}
+                <Button
+                  onClick={() => {
+                    // Changing account keeps the old one for refunds: say what not to do first.
+                    if (
+                      !connection ||
+                      window.confirm(`${REVOKE_WARNING}\n\n¿Vincular otra cuenta?`)
+                    ) {
+                      connect.mutate();
+                    }
+                  }}
+                  disabled={connect.isPending}
+                >
+                  {connection ? 'Vincular otra cuenta' : 'Conectar Mercado Pago'}
                 </Button>
                 {connection && (
                   <Button
@@ -156,7 +221,7 @@ function MercadoPagoPage() {
                     onClick={() => {
                       if (
                         window.confirm(
-                          '¿Desvincular la cuenta? La tienda dejará de cobrar con Mercado Pago.',
+                          `${REVOKE_WARNING}\n\n¿Desvincular la cuenta? La tienda dejará de cobrar con Mercado Pago. Sus ventas anteriores se podrán seguir reembolsando.`,
                         )
                       ) {
                         disconnect.mutate();
@@ -176,6 +241,28 @@ function MercadoPagoPage() {
             </div>
           )}
         </PageBlock>
+        {previous.length > 0 && (
+          <PageBlock
+            column="main"
+            blockId="mercado-pago-previous-accounts"
+            title="Cuentas anteriores"
+            description="Cuentas de Mercado Pago que esta tienda usó antes. Se mantienen para poder reembolsar sus ventas."
+          >
+            <ul className="space-y-3">
+              {previous.map((account) => (
+                <li key={`${account.mpUserId}-${account.linkedAt}`} className="text-sm">
+                  <span className="flex items-center gap-2">
+                    Cuenta de Mercado Pago n.º {account.mpUserId}
+                    <Badge variant="secondary">
+                      {account.status === 'released' ? 'Liberada' : 'Anterior'}
+                    </Badge>
+                  </span>
+                  <span className="text-muted-foreground">{previousAccountText(account)}</span>
+                </li>
+              ))}
+            </ul>
+          </PageBlock>
+        )}
       </PageLayout>
     </Page>
   );

@@ -87,13 +87,51 @@ También existe la mutación `provisionStore` de la Admin API (solo superadmin).
 ## Vincular el Mercado Pago de un local
 
 1. El dueño entra a su dashboard › **Ajustes › Mercado Pago** y pulsa **Conectar Mercado Pago**.
-2. Autoriza en Mercado Pago con **su** cuenta. Cada cuenta de Mercado Pago sirve a **un solo local**.
+2. Autoriza en Mercado Pago con **su** cuenta. Una cuenta de Mercado Pago vende para **un solo local a la vez**.
 3. Vuelve al dashboard con el estado "Conectada". Mientras no esté conectada, la tienda no ofrece Mercado Pago.
 
 Antes hay que registrar la aplicación de Mercado Pago y configurar la plataforma:
 [`VERIFICATION.md` › Preparación común](VERIFICATION.md#preparación-común-una-sola-vez) lo explica
 paso a paso (aplicación, URL de OAuth con PKCE, webhooks, cuentas de prueba, túnel HTTPS).
 El sistema renueva solo los tokens (tarea diaria) y avisa por email si no puede.
+
+### Cambiar de cuenta
+
+El dueño abre Ajustes › Mercado Pago, pulsa **Vincular otra cuenta** y autoriza con la cuenta nueva. La
+cuenta anterior **no se pierde**: queda como "cuenta anterior" (vínculo `retired`). Con ella el local
+sigue pudiendo reembolsar sus ventas anteriores, sus pagos pendientes (por ejemplo un cupón de Rapipago)
+se siguen liquidando y sus contracargos se siguen asignando a ese local. Las preferencias nuevas usan la
+cuenta nueva. **No hay que revocar el acceso de la cuenta anterior desde Mercado Pago durante 180
+días**: si se revoca, los reembolsos de esas ventas hay que hacerlos desde el panel de Mercado Pago.
+
+**Desvincular** hace lo mismo sin cuenta nueva: el local deja de ofrecer Mercado Pago, pero no se borra
+nada. Pasados 180 días desde su último pago y 30 desde que se retiró, la cuenta anterior se libera sola
+(tarea diaria): se borran sus tokens si ningún local la usa, y el local recibe un aviso. Para ver qué se
+liberaría o liberar a pedido: `npm run release-links -- --dry-run` o `npm run release-links` (en
+contenedores, `docker compose run --rm release-links`). Las ventanas se cambian con
+`MP_RELEASE_AFTER_LAST_PAYMENT_DAYS` y `MP_RELEASE_AFTER_RETIRED_DAYS`.
+
+### Traspasar una cuenta de un local a otro
+
+1. El local A pulsa **Desvincular** (o el superadmin retira su cuenta, abajo). La cuenta queda `retired` en A.
+2. El titular de la cuenta entra al dashboard del local B, abre Ajustes › Mercado Pago y autoriza **por
+   OAuth** con esa cuenta. Los tokens nunca se copian de un local a otro.
+3. Desde ese momento los pagos nuevos van a B. Las ventas de A siguen siendo de A: se reembolsan desde A
+   y sus contracargos se asignan a A, aunque la cuenta sea la misma.
+
+Mientras la cuenta esté `active` en un local, ningún otro puede vincularla (se rechaza sin cambiar
+nada), tampoco si el titular revocó su acceso: el local que la tiene tiene que desvincularla primero.
+
+### Herramientas del superadmin
+
+Desde la Admin API, con el rol de superadmin (no las ven los dueños de los locales):
+
+| Operación                                            | Qué hace                                                                                                                                                                                               |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `mercadoPagoChannelLinks(channelId)`                 | Lista los vínculos de un local con su estado y la fecha estimada de liberación                                                                                                                         |
+| `retireMercadoPagoAccount(channelId)`                | Retira la cuenta con la que vende un local (por ejemplo, un local cerrado cuyo dueño ya no está). No borra nada                                                                                        |
+| `mercadoPagoReleasePreview(linkId)`                  | Dice cuántos pagos de ese vínculo todavía se podrían reembolsar (los de los últimos 180 días, sin descontar los ya reembolsados)                                                                       |
+| `releaseMercadoPagoLink(input: { linkId, confirm })` | Libera un vínculo retirado **ya**, sin esperar los plazos, y borra los tokens si ningún otro local usa la cuenta. Exige `confirm: true`. Sirve, por ejemplo, si el titular pide que se borre su acceso |
 
 ## Crear un frontend a medida
 
@@ -151,16 +189,16 @@ par de funciones.
 
 Todas están en `.env.example` salvo las marcadas con ★, que son opcionales y todavía no figuran allí.
 
-| Grupo          | Variables                                                                                                                                                                                                                        |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| General        | `APP_ENV` (`dev`\|`prod`), `PUBLIC_URL`, `PORT`, `COOKIE_SECRET`, `CORS_ORIGINS`, `TRUST_PROXY`, `PLATFORM_NAME` ★, `PLATFORM_ALERT_EMAIL` ★                                                                                     |
-| Base de datos  | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `DB_SYNCHRONIZE` (solo desarrollo)                                                                                                                                |
-| Superadmin     | `SUPERADMIN_USERNAME`, `SUPERADMIN_PASSWORD`                                                                                                                                                                                     |
-| Mercado Pago   | `MP_CLIENT_ID`, `MP_CLIENT_SECRET`, `MP_WEBHOOK_SECRET`, `MP_REDIRECT_URI`, `MP_TOKEN_ENCRYPTION_KEY`, `MP_WEBHOOK_MODE`, `MP_OAUTH_TEST_TOKEN`, `MP_WEBHOOK_TOLERANCE_SECONDS`, `MP_PREFERENCE_TTL_MINUTES`, `MP_DASHBOARD_URL` |
-| Mercado Pago ★ | `MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE`, `MP_PREFERENCE_ITEMS_MODE` (`lines`\|`total`), `MP_REQUIRE_OFFLINE_ACCESS`, `MP_AUTH_URL`, `MP_ALLOW_INSECURE_RETURN_URLS` (solo pruebas)                                             |
-| Almacenamiento | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION`, `S3_FORCE_PATH_STYLE`, `ASSET_URL_PREFIX`                                                                                                             |
-| Email          | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`                                                                                                                                                             |
-| Tienda         | `VENDURE_SHOP_API_URL`, `VENDURE_CHANNEL_TOKEN`, `STOREFRONT_PUBLIC_URL`, `STORE_NAME` ★, `PAYMENT_SYNC_AFTER_MS` ★                                                                                                              |
+| Grupo          | Variables                                                                                                                                                                                                                                                              |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| General        | `APP_ENV` (`dev`\|`prod`), `PUBLIC_URL`, `PORT`, `COOKIE_SECRET`, `CORS_ORIGINS`, `TRUST_PROXY`, `PLATFORM_NAME` ★, `PLATFORM_ALERT_EMAIL` ★                                                                                                                           |
+| Base de datos  | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `DB_SYNCHRONIZE` (solo desarrollo)                                                                                                                                                                      |
+| Superadmin     | `SUPERADMIN_USERNAME`, `SUPERADMIN_PASSWORD`                                                                                                                                                                                                                           |
+| Mercado Pago   | `MP_CLIENT_ID`, `MP_CLIENT_SECRET`, `MP_WEBHOOK_SECRET`, `MP_REDIRECT_URI`, `MP_TOKEN_ENCRYPTION_KEY`, `MP_WEBHOOK_MODE`, `MP_OAUTH_TEST_TOKEN`, `MP_WEBHOOK_TOLERANCE_SECONDS`, `MP_PREFERENCE_TTL_MINUTES`, `MP_DASHBOARD_URL`                                       |
+| Mercado Pago ★ | `MP_RELEASE_AFTER_LAST_PAYMENT_DAYS` (180), `MP_RELEASE_AFTER_RETIRED_DAYS` (30), `MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE`, `MP_PREFERENCE_ITEMS_MODE` (`lines`\|`total`), `MP_REQUIRE_OFFLINE_ACCESS`, `MP_AUTH_URL`, `MP_ALLOW_INSECURE_RETURN_URLS` (solo pruebas) |
+| Almacenamiento | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION`, `S3_FORCE_PATH_STYLE`, `ASSET_URL_PREFIX`                                                                                                                                                   |
+| Email          | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`                                                                                                                                                                                                   |
+| Tienda         | `VENDURE_SHOP_API_URL`, `VENDURE_CHANNEL_TOKEN`, `STOREFRONT_PUBLIC_URL`, `STORE_NAME` ★, `PAYMENT_SYNC_AFTER_MS` ★                                                                                                                                                    |
 
 Ningún secreto va al repositorio. Los de Mercado Pago solo existen en el servidor.
 
@@ -187,5 +225,5 @@ Las reglas que no se negocian, y dónde se prueban:
 
 ## Para seguir
 
-- [ ] Registrar la aplicación de Mercado Pago y recorrer [`VERIFICATION.md`](VERIFICATION.md) (V1, V2, V6, V7, V12–V18).
+- [ ] Registrar la aplicación de Mercado Pago y recorrer [`VERIFICATION.md`](VERIFICATION.md): **V19 primero** (si los identificadores de la cuenta no coinciden hay que rediseñar una regla), y después V1, V2, V6, V7, V12–V18 y V20.
 - [ ] Decidir hosting, proveedor S3, SMTP, dominios y titularidad de la aplicación (PRD 16.9): [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).

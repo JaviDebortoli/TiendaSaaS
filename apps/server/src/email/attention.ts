@@ -50,10 +50,50 @@ const TEXTS: Record<AttentionReason, { title: string; message: string; action: s
       'Mercado Pago informó que un pago de la tienda fue devuelto, disputado o contracargado.',
     action: 'Revisá el pedido en el panel. El estado del pedido no se cambia automáticamente.',
   },
+  collector_mismatch: {
+    title: 'Un pago aprobado no se pudo asignar a la cuenta que lo cobró',
+    message:
+      'Mercado Pago aprobó un pago pero informa que lo cobró una cuenta distinta de la que se consultó. Por seguridad no se agregó al pedido.',
+    action:
+      'Revisá el pago en Mercado Pago. Si es legítimo, reembolsalo desde ahí o avisá a la plataforma para resolverlo.',
+  },
+  collector_missing: {
+    title: 'Mercado Pago no informó qué cuenta cobró un pago aprobado',
+    message:
+      'Mercado Pago aprobó un pago pero no indicó qué cuenta lo cobró, así que no se pudo confirmar. Por seguridad no se agregó al pedido.',
+    action:
+      'Revisá el pago en Mercado Pago. Si es legítimo, reembolsalo desde ahí o avisá a la plataforma para resolverlo.',
+  },
+  link_released: {
+    title: 'Se liberó una cuenta de Mercado Pago anterior de tu tienda',
+    message:
+      'Pasó el plazo para reembolsar las ventas cobradas con una cuenta de Mercado Pago que la tienda dejó de usar. Desde ahora esa cuenta ya no se usa para esta tienda y sus ventas no se pueden reembolsar desde el panel.',
+    action:
+      'Si necesitás reembolsar una venta cobrada con esa cuenta, hacelo desde el panel de Mercado Pago de esa cuenta.',
+  },
+  released_link_payment: {
+    title: 'Llegó un pago aprobado para una cuenta ya liberada',
+    message:
+      'Llegó un pago aprobado de una cuenta que ya se había liberado de la tienda. Se verificó y se agregó al pedido, pero la regla de liberación debería haberlo evitado.',
+    action: 'Revisá los plazos de liberación de cuentas y el pedido indicado.',
+  },
+  unverifiable_payment: {
+    title: 'No se pudo verificar una notificación de Mercado Pago',
+    message:
+      'Llegó una notificación de pago de una cuenta que no se conoce o que ya no tiene credenciales, así que no se pudo consultar el pago.',
+    action: 'Revisá si la cuenta corresponde a una tienda y si hay que volver a vincularla.',
+  },
 };
 
 /** Reasons that also concern whoever runs the platform, not only the store. */
-const PLATFORM_REASONS = new Set<AttentionReason>(['token_renewal_failed', 'account_disconnected']);
+const PLATFORM_REASONS = new Set<AttentionReason>([
+  'token_renewal_failed',
+  'account_disconnected',
+  'collector_mismatch',
+  'collector_missing',
+  'released_link_payment',
+  'unverifiable_payment',
+]);
 
 /** Published for the email plugin, which needs the request context of the store. */
 export class StoreAttentionEmailEvent extends VendureEvent {
@@ -72,9 +112,13 @@ export const attentionEmailHandler = new EmailEventListener('mercadopago-attenti
   .setRecipient((event) => event.recipients.join(', '))
   .setFrom('{{ platformFromAddress }}')
   .setOptionalAddressFields((event) => ({ bcc: event.bcc.join(', ') || undefined }))
-  .setSubject('Atención en {{ storeName }}: {{ title }}')
+  .setSubject(
+    'Atención en {{#if platformOnly}}{{ platformName }}{{else}}{{ storeName }}{{/if}}: {{ title }}',
+  )
   .setTemplateVars((event) => ({
     ...TEXTS[event.attention.reason],
+    // An event no store can be told about (an account nobody uses) is for the platform alone.
+    platformOnly: event.attention.channelId === null,
     orderCode: event.attention.details.orderCode,
     mpPaymentId: event.attention.details.mpPaymentId,
     detail: event.attention.details.message,
@@ -110,7 +154,7 @@ export class AttentionNotifier {
 
   async notify(event: MercadoPagoAttentionEvent): Promise<void> {
     const ctx = await this.contextFor(event.channelId);
-    const owners = await this.administratorEmails(event.channelId);
+    const owners = event.channelId === null ? [] : await this.administratorEmails(event.channelId);
     const platform = PLATFORM_REASONS.has(event.reason) ? await this.platformEmails() : [];
     const recipients = owners.length > 0 ? owners : platform;
     if (recipients.length === 0) {
@@ -124,7 +168,9 @@ export class AttentionNotifier {
     await this.eventBus.publish(new StoreAttentionEmailEvent(ctx, event, recipients, bcc));
   }
 
-  private async contextFor(channelId: ID): Promise<RequestContext> {
+  private async contextFor(channelId: ID | null): Promise<RequestContext> {
+    // No store to speak about: the default channel, which is where the platform's own mail lives.
+    if (channelId === null) return this.requestContextService.create({ apiType: 'admin' });
     const channel = await this.connection.rawConnection
       .getRepository(Channel)
       .findOneByOrFail({ id: channelId });

@@ -235,7 +235,10 @@ describe('createMercadoPagoCheckout refusals', () => {
 
     it('refuses with a clear reason and calls nothing', async () => {
       const order = await checkoutAsGuest(shopClient, store, payable);
-      await connections.markDisconnected(store.channelId, 'revoked');
+      await connections.markDisconnected(
+        (await connections.findActiveAccount(store.channelId))!.id,
+        'revoked',
+      );
 
       expect(await create(order.code)).toMatchObject({ reason: 'NOT_CONNECTED' });
       expect(mp.requests).toHaveLength(0);
@@ -266,6 +269,7 @@ describe('syncMercadoPagoPayment (PRD 9.6 step 6)', () => {
       currency_id: 'ARS',
       external_reference: order.code,
       ownerToken: grant.access_token,
+      collector_id: grant.user_id,
       ...overrides,
     });
   const sync = (orderCode: string, paymentId: string | number) =>

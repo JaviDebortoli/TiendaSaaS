@@ -48,6 +48,7 @@ const mpPayment = (order: { code: string; totalWithTax: number }, overrides = {}
     currency_id: 'ARS',
     external_reference: order.code,
     ownerToken: grantA.access_token,
+    collector_id: grantA.user_id,
     ...overrides,
   });
 

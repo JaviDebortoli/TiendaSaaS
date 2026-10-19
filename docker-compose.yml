@@ -53,6 +53,8 @@ x-app-environment: &app-environment
   MP_REQUIRE_OFFLINE_ACCESS: ${MP_REQUIRE_OFFLINE_ACCESS:-true}
   MP_AUTH_URL: ${MP_AUTH_URL:-}
   MP_PREFERENCE_TTL_MINUTES: ${MP_PREFERENCE_TTL_MINUTES:-30}
+  MP_RELEASE_AFTER_LAST_PAYMENT_DAYS: ${MP_RELEASE_AFTER_LAST_PAYMENT_DAYS:-180}
+  MP_RELEASE_AFTER_RETIRED_DAYS: ${MP_RELEASE_AFTER_RETIRED_DAYS:-30}
   MP_PREFERENCE_ITEMS_MODE: ${MP_PREFERENCE_ITEMS_MODE:-lines}
   MP_DASHBOARD_URL: ${MP_DASHBOARD_URL:-}
   MP_ALLOW_INSECURE_RETURN_URLS: ${MP_ALLOW_INSECURE_RETURN_URLS:-false}
@@ -199,6 +201,19 @@ services:
       dockerfile: apps/server/Dockerfile
     profiles: ['tools']
     entrypoint: ['node', 'dist/scripts/refresh-connections.js']
+    environment: *app-environment
+    depends_on:
+      server:
+        condition: service_healthy
+
+  # Optional: release the retired Mercado Pago links whose refund period is over (the daily task does it).
+  #   docker compose run --rm release-links --dry-run   only lists them
+  release-links:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    profiles: ['tools']
+    entrypoint: ['node', 'dist/scripts/release-links.js']
     environment: *app-environment
     depends_on:
       server:

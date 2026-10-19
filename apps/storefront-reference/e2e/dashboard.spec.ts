@@ -16,6 +16,9 @@ test.skip(
 
 const DASHBOARD = 'http://localhost:3300/dashboard';
 
+const REVOKE_WARNING =
+  'No revoques el acceso de esta cuenta desde Mercado Pago durante 180 días. Si lo hacés, los reembolsos de las ventas cobradas en ella vas a tener que hacerlos desde el panel de Mercado Pago.';
+
 async function signInAsOwner(page: import('@playwright/test').Page) {
   await page.goto(`${DASHBOARD}/login`);
   await page.getByRole('textbox', { name: 'Email' }).fill('dueno@e2e.test');
@@ -54,11 +57,21 @@ test('the Mercado Pago page shows the connection and starts the authorization on
   await expect(page.getByText('Conectada', { exact: true })).toBeVisible();
   await expect(page.getByText(/Cuenta de Mercado Pago n\.º 7777/)).toBeVisible();
 
+  // The warning is shown, and again in the confirmation, before changing the account.
+  await expect(page.getByText(REVOKE_WARNING)).toBeVisible();
+
   // Mercado Pago itself is not reachable from the tests: capture where the owner is sent.
   await page.route('https://auth.mercadopago.com/**', (route) =>
     route.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Mercado Pago</h1>' }),
   );
-  await page.getByRole('button', { name: 'Volver a vincular' }).click();
+  // `confirm` blocks the click until it is answered, so the handler goes first.
+  let confirmation = '';
+  page.once('dialog', (dialog) => {
+    confirmation = dialog.message();
+    void dialog.accept();
+  });
+  await page.getByRole('button', { name: 'Vincular otra cuenta' }).click();
+  expect(confirmation).toContain(REVOKE_WARNING);
   await page.waitForURL(/auth\.mercadopago\.com\/authorization/);
 
   const url = new URL(page.url());
@@ -66,6 +79,37 @@ test('the Mercado Pago page shows the connection and starts the authorization on
   expect(url.searchParams.get('code_challenge_method')).toBe('S256');
   expect(url.searchParams.get('state')).toMatch(/^[A-Za-z0-9_-]{43}$/);
   expect(url.toString()).not.toContain('test-client-secret');
+});
+
+test('the Mercado Pago page lists the accounts the store used before and when they are released', async ({
+  page,
+}) => {
+  await signInAsOwner(page);
+  await page.goto(`${DASHBOARD}/mercado-pago`);
+
+  await expect(page.getByText('Cuentas anteriores', { exact: true })).toBeVisible();
+  const previous = page.getByRole('listitem').filter({ hasText: 'n.º 7000' });
+  await expect(previous).toBeVisible();
+  await expect(previous).toContainText('Anterior');
+  await expect(previous).toContainText('Sus ventas todavía se pueden reembolsar desde acá.');
+  await expect(previous).toContainText('Se liberará a partir del');
+});
+
+test('unlinking asks first, with the warning, and does nothing if the owner backs out', async ({
+  page,
+}) => {
+  await signInAsOwner(page);
+  await page.goto(`${DASHBOARD}/mercado-pago`);
+
+  let confirmation = '';
+  page.once('dialog', (dialog) => {
+    confirmation = dialog.message();
+    void dialog.dismiss(); // the store must stay linked: other tests sell with it
+  });
+  await page.getByRole('button', { name: 'Desvincular' }).click();
+  expect(confirmation).toContain(REVOKE_WARNING);
+
+  await expect(page.getByText('Conectada', { exact: true })).toBeVisible();
 });
 
 test('the page explains the result when Mercado Pago sends the owner back', async ({ page }) => {

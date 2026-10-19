@@ -1,11 +1,11 @@
 import { MercadoPagoConnectionService } from 'vendure-plugin-mercadopago';
 import { runScript, withApp } from './app';
 
-const USAGE = `Renews Mercado Pago connections now, like the daily scheduled task does.
+const USAGE = `Renews Mercado Pago accounts now, like the daily scheduled task does.
 
 Usage:
   npm run refresh-connections -w @tiendasaas/server            only those expiring soon
-  npm run refresh-connections -w @tiendasaas/server -- --all   every connected store (e.g. to test renewal)`;
+  npm run refresh-connections -w @tiendasaas/server -- --all   every account a store still uses (e.g. to test renewal)`;
 
 runScript(async () => {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -14,7 +14,7 @@ runScript(async () => {
   }
   const all = process.argv.includes('--all');
   const result = await withApp((app) =>
-    // "Now" is pushed a year ahead to make every connection count as expiring.
+    // "Now" is pushed a year ahead to make every account count as expiring.
     app
       .get(MercadoPagoConnectionService)
       .refreshExpiring(all ? new Date(Date.now() + 366 * 86_400_000) : new Date()),

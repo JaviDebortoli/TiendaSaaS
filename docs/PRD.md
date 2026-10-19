@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Responsable** | Javier Debórtoli (proyecto personal) |
-| **Versión** | 1.2 (MVP implementado) |
+| **Versión** | 1.3 (MVP implementado, con cuentas y vínculos) |
 | **Fecha** | 18 de octubre de 2026 |
 | **Estado** | MVP implementado y probado con un Mercado Pago simulado. Quedan los puntos de la sección 13 que solo se pueden cerrar con credenciales reales de Mercado Pago |
 | **Stack verificado** | TypeScript sobre Node.js 24 LTS, Vendure 3.8, PostgreSQL 17, Mercado Pago Argentina (Checkout Pro vía Preferences API) con el SDK `mercadopago` 3.x. Detalle en la sección 16 |
@@ -15,6 +15,8 @@ Convención usada en este documento:
 - **[Implementado]**: algo que se decidió o se descubrió al desarrollar y que este documento no preveía o preveía distinto. Cada marca remite a su entrada `DEC-n` en `DECISIONS.md` o a su punto `V<n>` en `VERIFICATION.md`, donde están el motivo y la evidencia.
 
 **Versión 1.2**: el documento se actualizó para describir lo que se construyó. Los puntos de la sección 13 pasaron a tener estado, se agregaron los que aparecieron al implementar (V11 a V18) y se sumó la sección 18 con el estado de la implementación. Lo que no cambió sigue siendo el diseño original.
+
+**Versión 1.3**: cada local dejó de tener una sola conexión. La cuenta de Mercado Pago (con sus tokens) y el vínculo con un local son entidades separadas, de modo que cambiar de cuenta o traspasarla no pierde reembolsos, pagos tardíos ni contracargos. Cambian las secciones 9.2 a 9.5, 9.7, 9.9, 12 y 18.2, y aparecen V19 y V20 en la sección 13.
 
 ---
 
@@ -195,7 +197,7 @@ sequenceDiagram
   V->>V: valida state y recupera el canal
   V->>API: POST /oauth/token (grant_type=authorization_code, code, code_verifier)
   API-->>V: access_token, refresh_token, public_key, user_id, expires_in
-  V->>V: guarda la conexión cifrada
+  V->>V: guarda la cuenta cifrada y la vincula al local
 ```
 
 Requisitos confirmados [Doc]:
@@ -212,45 +214,80 @@ Decisión [Diseño]: se usa PKCE con S256, y el `state` se guarda en el servidor
 - **Rutas**: el dueño inicia la vinculación con la mutación `startMercadoPagoConnection` (Admin API), que devuelve la URL de autorización; Mercado Pago vuelve a `GET /mercadopago/oauth/callback` (la `redirect_uri` registrada en la aplicación, `MP_REDIRECT_URI`). Al terminar, el dueño vuelve a `/dashboard/mercado-pago?mp=connected|error` (`MP_DASHBOARD_URL`). El `client_secret` nunca va en la URL de autorización.
 - **Sandbox**: `MP_OAUTH_TEST_TOKEN=true` agrega `test_token: true` al canje. Con credenciales reales se pone en `false`.
 - **Permiso sin conexión**: la vinculación se rechaza si el `scope` devuelto no incluye `offline_access`, porque esa conexión no se podría renovar. Si Mercado Pago no devolviera `scope` aunque el permiso esté otorgado, `MP_REQUIRE_OFFLINE_ACCESS=false` lo relaja (V17).
-- **Una cuenta, un local**: se aplica con índices únicos en la base (`channelId` y `mpUserId`). Una conexión `disconnected` no bloquea: otro local puede tomar esa cuenta.
+- **Una cuenta vende para un solo local a la vez**: se aplica con índices únicos *parciales* en la base sobre los vínculos `active` (9.3). Los vínculos `retired` y `released` no bloquean nada. **Una cuenta revocada (`disconnected`) que sigue `active` en un local tampoco la puede tomar otro**: ese local tiene que desvincularla o el superadmin retirarla (DEC-42). Esto corrige lo que decía la versión anterior, "una conexión `disconnected` no bloquea: otro local puede tomar esa cuenta", que el índice único sobre `mpUserId` nunca permitió.
 - La respuesta del renovado y de `mp-connect` no está bien documentada; el comportamiento adoptado está en 9.4 (DEC-11, DEC-16).
 
-Regla [Diseño]: **una cuenta de Mercado Pago corresponde a una sola tienda.** El webhook llega a nivel aplicación y se asigna al local por el `user_id` del vendedor (sección 9.7), así que si dos canales compartieran el mismo `user_id` no habría forma de saber a cuál pertenece la notificación. Por eso:
-- `mpUserId` es único en la base (sección 9.3).
-- Si al terminar el OAuth el `user_id` recibido ya está vinculado a **otro** canal, la vinculación se rechaza con un mensaje claro y no se guarda nada.
-- Si el `user_id` ya está vinculado al **mismo** canal, es una reconexión y se actualizan los tokens.
+Regla [Diseño]: **una cuenta de Mercado Pago vende para un solo local a la vez.** Los pagos se atribuyen al local por el pedido (9.7), no por la cuenta, pero si dos locales vendieran con la misma cuenta, los reembolsos, las cancelaciones y los avisos de la cuenta no tendrían un local claro. Por eso `mpUserId` es único en la base (9.3) y un local tiene como máximo un vínculo `active`.
+
+Con el `user_id` X que devuelve el OAuth para el local C [Implementado, DEC-41]:
+
+| Situación | Resultado |
+|---|---|
+| X está `active` en **otro** local | Se rechaza con un mensaje claro y no se cambia nada |
+| C ya tiene a X `active` | Reconexión: se actualizan los tokens de la cuenta |
+| C tiene otra cuenta Y `active` | El vínculo C–Y pasa a `retired` (`retiredAt` = ahora) y queda C–X `active` |
+| C tiene un vínculo `retired` con X | Se reactiva ese vínculo, sin crear otro |
+| X tiene vínculos `retired` en otros locales | Se permite: se crea C–X `active` y los otros siguen `retired` |
+
+- En todos los casos los tokens nuevos reemplazan los de la cuenta X. **Nunca se copian tokens de un local a otro**: un traspaso siempre exige que el titular autorice por OAuth en el local nuevo.
 - Un dueño con dos locales necesita una cuenta de Mercado Pago distinta para cada uno.
+- [Implementado] **Cambiar de cuenta**: el local vincula Y y X queda `retired`. Sus ventas se siguen pudiendo reembolsar, sus pagos pendientes (un cupón de Rapipago, una preferencia ya creada) se siguen liquidando y sus contracargos se siguen asignando al local.
+- [Implementado] **Traspasar una cuenta de A a B**: A la desvincula (queda `retired`) y después B la autoriza por OAuth. Las ventas de A siguen siendo de A y las de B, de B, aunque la cuenta sea la misma.
+- [Verificar] V20: si una autorización nueva de la misma cuenta anula los tokens anteriores. El diseño funciona igual en los dos casos, porque los tokens viven una sola vez en la cuenta y la autorización nueva reemplaza los guardados.
 
 ### 9.3 Almacenamiento de credenciales [Diseño]
-Las credenciales **no** se guardan en los argumentos del PaymentMethod, porque vencen y se rotan. Se usa una entidad propia del plugin:
+Las credenciales **no** se guardan en los argumentos del PaymentMethod, porque vencen y se rotan. Se usan dos entidades propias del plugin [Implementado, DEC-41]: la cuenta, que guarda los tokens una sola vez, y el vínculo, que dice qué local usa o usó esa cuenta.
+
+**`MercadoPagoAccount`**: una fila por cuenta de Mercado Pago, sin importar cuántos locales la hayan usado.
 
 | Campo | Notas |
 |---|---|
-| `channelId` | Único |
-| `mpUserId` | **Único.** Sirve para identificar al local cuando llega un webhook |
-| `accessToken` | Cifrado (AES-256-GCM, clave en variable de entorno) |
-| `refreshToken` | Cifrado |
+| `mpUserId` | **Único.** Sirve para identificar la cuenta cuando llega un webhook |
+| `accessToken` | Cifrado (AES-256-GCM, clave en variable de entorno). Vacío si la cuenta está `disconnected` o `released` |
+| `refreshToken` | Cifrado. Igual |
 | `publicKey` | |
 | `expiresAt` | Calculado a partir de `expires_in` |
 | `scope` | Tiene que incluir `offline_access` |
-| `status` | `connected`, `expiring`, `disconnected` |
+| `status` | `connected`, `expiring`, `disconnected`, `released` |
+
+**`MercadoPagoChannelLink`**: el vínculo entre un local y una cuenta.
+
+| Campo | Notas |
+|---|---|
+| `channelId` | El local |
+| `accountId` | La cuenta |
+| `status` | `active`, `retired`, `released` |
+| `linkedAt`, `retiredAt`, `releasedAt` | Cuándo se vinculó, se retiró y se liberó |
+
+Reglas, aplicadas con **índices únicos parciales** en la base y no solo en el código:
+- Un local tiene como máximo **un vínculo `active`** (índice único sobre `channelId` donde `status = 'active'`).
+- Una cuenta está **`active` en un solo local** a la vez (índice único sobre `accountId` donde `status = 'active'`).
+- Los vínculos `retired` y `released` **no bloquean** nada.
 
 [Implementado] Detalles:
-- El cifrado usa AES-256-GCM con un contexto de datos autenticados (AAD) que liga cada token al canal y al campo, de modo que un token copiado a otra fila no se descifra. La clave es `MP_TOKEN_ENCRYPTION_KEY` (`openssl rand -base64 32`). **Si se pierde, hay que volver a vincular todos los locales**, y rotarla tampoco es automático.
-- Los tokens no salen de esta entidad: ninguna operación de la API los devuelve. El dashboard consulta `mercadoPagoConnection` y solo recibe estado, cuenta y vigencia.
-- Permiso `ManageMercadoPago`: lo tienen el dueño de cada local y el superadmin, y protege `mercadoPagoConnection`, `startMercadoPagoConnection` y `disconnectMercadoPago`. `cancelMercadoPagoPayment` pide `UpdateOrder` (sección 9.9).
-- Además de la conexión, el plugin tiene dos entidades más, ambas con migración: `MercadoPagoOAuthState` (el `state` de un solo uso, ligado al canal, con el `code_verifier` cifrado) y `MercadoPagoPaymentClaim` (el reclamo por pago que garantiza la idempotencia, sección 9.7).
+- El cifrado usa AES-256-GCM con un contexto de datos autenticados (AAD) que liga cada token **a la cuenta** y al campo (`mp-account:<mpUserId>:access` y `:refresh`), de modo que un token copiado a la fila de otra cuenta no se descifra. Antes se ligaba al canal, y por eso un cambio de local obligaba a volver a cifrar. La clave es `MP_TOKEN_ENCRYPTION_KEY` (`openssl rand -base64 32`). **Si se pierde, hay que volver a vincular todos los locales**, y rotarla tampoco es automático.
+- Los tokens no salen de la cuenta: ninguna operación de la API los devuelve. El dashboard consulta `mercadoPagoConnection` y `mercadoPagoPreviousAccounts` y solo recibe estado, cuenta y fechas.
+- `expiring` es un subestado de "conectada": la última renovación falló, el token todavía sirve y el dueño tiene que volver a vincular. Para que la cuenta sirva, el estado tiene que ser `connected` o `expiring` y el token no puede haber vencido.
+- Ciclo de vida de un vínculo: `active` pasa a `retired` cuando el local desvincula, cuando cambia de cuenta o cuando el superadmin la retira; `retired` pasa a `released` cuando ya no hay nada que reembolsar (9.4). Volver a vincular la misma cuenta al mismo local reactiva el vínculo, sea `retired` o `released`, y no crea otro.
+- Permiso `ManageMercadoPago`: lo tienen el dueño de cada local y el superadmin, y protege `mercadoPagoConnection`, `mercadoPagoPreviousAccounts`, `startMercadoPagoConnection` y `disconnectMercadoPago`. Las herramientas del superadmin (`retireMercadoPagoAccount`, `mercadoPagoChannelLinks`, `mercadoPagoReleasePreview`, `releaseMercadoPagoLink`) piden `SuperAdmin`. `cancelMercadoPagoPayment` pide `UpdateOrder` (sección 9.9).
+- Además de la cuenta y el vínculo, el plugin tiene dos entidades más: `MercadoPagoOAuthState` (el `state` de un solo uso, ligado al canal, con el `code_verifier` cifrado) y `MercadoPagoPaymentClaim` (el reclamo por pago que garantiza la idempotencia, sección 9.7). Todas con migración.
+- **Migración desde la versión anterior** (una conexión por local): cada conexión pasa a ser una cuenta y un vínculo `active`, conservando los tokens, que se vuelven a cifrar para la cuenta (por eso la migración necesita `MP_TOKEN_ENCRYPTION_KEY` si hay tokens guardados, y falla sin tocar nada si falta). Los pagos ya cobrados reciben `mpAccountUserId` con la cuenta de su local, la única que existía. Se puede revertir. Está probada sobre una base con datos de la versión anterior.
+- Cada pago cobrado guarda en su `metadata` dos datos por separado: `mpAccountUserId` (el `mpUserId` de la cuenta **con cuyo token se consultó el pago**, la que se usa para reembolsarlo y cancelarlo) y `mpCollectorId` (el `collector_id` tal como lo devuelve Mercado Pago). Ver 9.5 y V19.
 
 ### 9.4 Renovación de tokens
 - La renovación usa `grant_type=refresh_token` y devuelve un access token nuevo **y un refresh token nuevo, que hay que volver a guardar** [Doc].
 - Solo funciona si la aplicación recibió el scope `offline_access` y el vendedor lo autorizó [Doc].
-- [Diseño] Una tarea programada diaria en el worker renueva las conexiones que venzan en menos de 30 días. Si falla, marca la conexión como `expiring` y avisa al local y al superadmin para que vuelva a conectar.
-- [Diseño] Se escucha el tópico `mp-connect` (vinculación y desvinculación de cuentas OAuth) [Doc] para marcar `disconnected` si el local revoca el acceso. Mientras esté desconectado, el método de pago queda no elegible en ese canal.
+- [Diseño] Una tarea programada diaria en el worker renueva las cuentas que venzan en menos de 30 días. Si falla, marca la cuenta como `expiring` y avisa al local y al superadmin para que vuelva a conectar.
+- [Diseño] Se escucha el tópico `mp-connect` (vinculación y desvinculación de cuentas OAuth) [Doc] para marcar `disconnected` si el titular revoca el acceso. Mientras esté desconectada, el método de pago queda no elegible en cada canal que la use.
 - [Implementado] Cómo quedó:
-  - La tarea corre con el planificador por defecto de Vendure (una sola ejecución aunque haya varios workers). La ventana de 30 días es configurable en el plugin (`refreshWindowDays`). `npm run refresh-connections` (en contenedores, `docker compose run --rm refresh-connections`) renueva a pedido, y con `--all` fuerza todas.
-  - Renovar es una operación serializada por canal: dos renovaciones simultáneas no gastan el mismo `refresh_token`, que al rotar quedaría inválido. Se guarda el `refresh_token` nuevo; si la respuesta no trae `expires_in`, se asumen 180 días, la vigencia documentada (DEC-11, V12).
+  - La tarea corre con el planificador por defecto de Vendure (una sola ejecución aunque haya varios workers). La ventana de 30 días es configurable en el plugin (`refreshWindowDays`). Renueva **cada cuenta que algún local todavía use o pueda reembolsar con ella** (con al menos un vínculo `active` o `retired`); una cuenta que solo tiene vínculos `released` no se renueva. `npm run refresh-connections` (en contenedores, `docker compose run --rm refresh-connections`) renueva a pedido, y con `--all` fuerza todas.
+  - Renovar es una operación serializada **por cuenta, no por local** (DEC-49): dos locales pueden compartir una cuenta (uno `retired` y otro `active`), y dos renovaciones simultáneas no gastan el mismo `refresh_token`, que al rotar quedaría inválido. Se guarda el `refresh_token` nuevo; si la respuesta no trae `expires_in`, se asumen 180 días, la vigencia documentada (DEC-11, V12). La serialización es dentro de un proceso, como antes; entre el servidor y el worker no hay un candado.
   - `mp-connect` (DEC-16): la documentación no describe el cuerpo de esa notificación. Al recibirla, el plugin **no confía en el cuerpo**: pregunta a Mercado Pago (`GET /users/me` con el token del local, y renueva si falla) y marca `disconnected` solo si el acceso de verdad fue revocado. Es la misma regla que para los pagos (V13).
-  - Avisos (DEC-36): el plugin solo publica `MercadoPagoAttentionEvent`; el servidor envía el email. Va a los administradores del canal siempre y, para problemas de conexión (`token_renewal_failed`, `account_disconnected`), además en copia oculta al superadmin y a `PLATFORM_ALERT_EMAIL` si está definida (el usuario superadmin por defecto no es una dirección de email). Si el local no tiene administradores con email, el aviso va a la plataforma. Los pagos que quedan para revisión manual (9.8) también generan aviso.
+  - Avisos (DEC-36, DEC-50): el plugin solo publica `MercadoPagoAttentionEvent`; el servidor envía el email. Va a los administradores del canal siempre y, para los problemas que también conciernen a la plataforma (`token_renewal_failed`, `account_disconnected`, `collector_mismatch`, `collector_missing`, `released_link_payment`, `unverifiable_payment`), además en copia oculta al superadmin y a `PLATFORM_ALERT_EMAIL` si está definida (el usuario superadmin por defecto no es una dirección de email). Si el local no tiene administradores con email, el aviso va a la plataforma. Un aviso sobre una cuenta que ningún local usa (`unverifiable_payment`) no tiene local y va solo a la plataforma. `link_released` es informativo y va solo al local. Los pagos que quedan para revisión manual (9.8) también generan aviso. Una renovación o una revocación que afecta a una cuenta avisa a cada local que la usa o puede reembolsar con ella.
+  - **Desvincular no borra nada** (DEC-45): "Desvincular" pasa el vínculo `active` a `retired`. El local deja de ofrecer Mercado Pago, pero sus ventas siguen pudiendo reembolsarse y sus pagos pendientes se siguen procesando. Mientras tanto, el verificador de elegibilidad oculta el método a los compradores nuevos, pero un pago que Mercado Pago ya aprobó se aplica a su pedido igual: el procesador abre un alcance de liquidación (`settlement-scope.ts`) solo después de verificar el pago, para que el verificador no lo rechace.
+  - **Liberación automática** (DEC-47): una tarea diaria (`mercadopago-release-links`, después de la renovación) pasa un vínculo `retired` a `released` cuando se cumplen **las dos** condiciones: pasaron **180 días** desde el último pago liquidado de ese vínculo (mismo local y misma cuenta; es el plazo en que Mercado Pago permite reembolsar) y **30 días** desde `retiredAt` (ya no se crean preferencias con ese vínculo y los pagos sin confirmar vencen solos a los 30 días). Un vínculo que nunca liquidó un pago solo espera los 30 días. Ambas ventanas son configurables en el plugin (`releaseAfterLastPaymentDays` y `releaseAfterRetiredDays`, variables `MP_RELEASE_AFTER_LAST_PAYMENT_DAYS` y `MP_RELEASE_AFTER_RETIRED_DAYS`). Al liberar se registra `releasedAt`, se avisa a los administradores del local, y si la cuenta ya no tiene vínculos `active` ni `retired` se borran sus tokens y queda `released`. `npm run release-links` corre lo mismo a pedido, y con `--dry-run` solo lista lo que liberaría.
+  - **Herramientas del superadmin** (DEC-47): `retireMercadoPagoAccount(channelId)` retira la cuenta de un local cerrado cuyo dueño ya no está. `mercadoPagoReleasePreview(linkId)` dice cuántos pagos de ese vínculo todavía se podrían reembolsar (los liquidados dentro de los últimos 180 días, sin descontar los ya reembolsados) y `releaseMercadoPagoLink({ linkId, confirm: true })` libera un vínculo `retired` ya, sin esperar los plazos: exige la confirmación explícita y sirve, por ejemplo, si el titular de una cuenta pide que se borre su acceso. Un vínculo `active` no se puede liberar: primero hay que retirarlo.
+  - **Qué muestra el dashboard** (Ajustes › Mercado Pago): la cuenta activa, y una lista de cuentas anteriores con su estado y la fecha estimada de liberación. Antes de "Vincular otra cuenta" y de "Desvincular" se muestra: "No revoques el acceso de esta cuenta desde Mercado Pago durante 180 días. Si lo hacés, los reembolsos de las ventas cobradas en ella vas a tener que hacerlos desde el panel de Mercado Pago." Ninguna operación devuelve tokens.
 
 ### 9.5 Handler de pago en Vendure
 Vendure trae solo un handler de prueba, y cada integración se escribe como un `PaymentMethodHandler` [Doc]. Funciones del handler `mercado-pago`:
@@ -259,16 +296,18 @@ Vendure trae solo un handler de prueba, y cada integración se escribe como un `
 |---|---|
 | `createPayment` | Se llama desde el procesamiento del webhook o de `syncMercadoPagoPayment` (no desde el frontend) cuando el pago ya está aprobado. Vuelve a consultar el pago a Mercado Pago y exige las mismas condiciones (ver abajo). Devuelve `state: 'Settled'`, `transactionId` = id del pago en Mercado Pago, y `amount` |
 | `settlePayment` | Devuelve `{ success: true }`, porque el pago llega ya capturado. Así está documentado para las integraciones que capturan al crear [Doc] |
-| `cancelPayment` | Opcional [Doc]. Cancela pagos `pending` o `in_process` en Mercado Pago |
-| `createRefund` | Opcional [Doc]. Llama a `POST /v1/payments/{id}/refunds` con el token del local |
+| `cancelPayment` | Opcional [Doc]. Cancela pagos `pending` o `in_process` en Mercado Pago, con el token de la cuenta que cobró el pago |
+| `createRefund` | Opcional [Doc]. Llama a `POST /v1/payments/{id}/refunds` con el token de la **cuenta que cobró el pago** (`metadata.mpAccountUserId`), no con el de la cuenta con la que el local vende hoy |
 
 Es el patrón de **página de pago alojada** que describe Vendure: el pago ya está autorizado cuando vuelve la notificación, la validación ocurre en un controlador o servicio, y el handler solo registra los datos [Doc]. El plugin oficial de Mollie usa la misma forma: una mutación que crea el "intent" y devuelve la URL, la redirección y el webhook que actualiza el pedido [Doc].
 
 [Implementado] Diferencias y precisiones respecto del diseño original:
-- **El handler vuelve a verificar el pago** (DEC-13). `addPaymentToOrder` es una mutación **pública** de la Shop API: sin esta verificación, cualquier comprador podría llamarla con un `mpPaymentId` inventado. Por eso `createPayment` consulta el pago a Mercado Pago con el token del local y exige estado `approved`, `external_reference` igual al código del pedido, moneda ARS y monto exacto. Sin un pago aprobado real de ese pedido no hay forma de liquidarlo desde el frontend. El costo es una segunda consulta por cada pago aprobado.
-- **`createRefund`** (DEC-17): si Mercado Pago rechaza el reembolso (por ejemplo, por falta de saldo), devuelve `state: 'Failed'` con `metadata.errorMessage` con el motivo de Mercado Pago, en lugar de lanzar una excepción. Así el intento queda registrado en el pedido.
+- **El handler vuelve a verificar el pago** (DEC-13). `addPaymentToOrder` es una mutación **pública** de la Shop API: sin esta verificación, cualquier comprador podría llamarla con un `mpPaymentId` inventado. Por eso `createPayment` consulta el pago a Mercado Pago con el token de una cuenta que el local usó (primero la `active`, después las `retired` y, solo para pagos ya verificados, las `released` que todavía tengan tokens) y exige estado `approved`, `collector_id` igual a esa cuenta (más abajo), `external_reference` igual al código del pedido, moneda ARS y monto exacto. Sin un pago aprobado real de ese pedido no hay forma de liquidarlo desde el frontend. El costo es una segunda consulta por cada pago aprobado.
+- **`createRefund`** (DEC-17, DEC-46): si Mercado Pago rechaza el reembolso (por ejemplo, por falta de saldo), devuelve `state: 'Failed'` con `metadata.errorMessage` con el motivo de Mercado Pago, en lugar de lanzar una excepción. Así el intento queda registrado en el pedido. Si la cuenta que cobró el pago ya no puede operar (está `released` o `disconnected`, o el local ya no tiene un vínculo `active` ni `retired` con ella), el reembolso queda `Failed` con: "Este pago se cobró en la cuenta <identificador>, que ya no está vinculada. Hacé el reembolso desde el panel de Mercado Pago de esa cuenta." Nunca se usa el token de una cuenta que otro local usa hoy para operar sobre las ventas de este.
+- **Cada pago registra quién lo cobró** (DEC-44): al liquidarlo, el handler guarda en `metadata` `mpAccountUserId` (la cuenta con cuyo token se consultó) y `mpCollectorId` (el `collector_id` que devuelve Mercado Pago). Un pago anterior a este cambio sin `mpAccountUserId` se asume de la cuenta `active` del local; la migración lo completa.
+- **El `collector_id` tiene que ser la cuenta consultada** (DEC-44, V19), en el webhook, en `syncMercadoPagoPayment` y en `createPayment`. Si Mercado Pago devuelve un `collector_id` presente e igual al `mpUserId` de la cuenta consultada, siguen las validaciones normales. Si es **distinto** o **falta**, el pago **no se liquida**: el reclamo queda en `needs_review` con el motivo `collector_mismatch` o `collector_missing`, el pedido recibe una nota y se avisa al local y a la plataforma. Nunca se acepta en silencio. Esta comparación no es solo para saber a qué local va el pago: también impide liquidar un pedido con un pago aprobado de **otra** cuenta cuyo `external_reference` se haya falsificado, en caso de que el token de un local pudiera leer pagos ajenos. No hay una variable para desactivarla. Si hay varias cuentas candidatas se prueba cada una y se acepta la primera cuyo pago traiga el `collector_id` correcto; la regla solo frena la liquidación: un pago de otro estado (pendiente, rechazado, devuelto o contracargado) se registra como siempre aunque tenga ese problema, para no perder el aviso de un contracargo, y el log deja el `collector_id` observado. Que `collector_id` coincida con el `user_id` del OAuth está sin confirmar: es lo primero que hay que probar en sandbox (V19) y, si no coincide, la regla se rediseña.
 - **`cancelPayment`** está implementado, pero Vendure solo lo ofrece para pagos que conoce, y este plugin nunca registra pagos pendientes (9.8). Por eso existe además la mutación `cancelMercadoPagoPayment` (9.9).
-- **Elegibilidad**: un `PaymentMethodEligibilityChecker` propio (`mercado-pago-connected`) hace elegible el método solo mientras la cuenta del canal está vinculada y su token no venció (sección 9.4).
+- **Elegibilidad**: un `PaymentMethodEligibilityChecker` propio (`mercado-pago-connected`) hace elegible el método solo si el canal tiene un vínculo `active` con una cuenta no revocada y con el token vigente (sección 9.4). Un pago que Mercado Pago ya aprobó se liquida igual aunque el local ya no ofrezca el método (alcance de liquidación, 9.4).
 - **Leer el propio pedido durante el pago** (DEC-27): con la estrategia por defecto de Vendure, un invitado solo puede leer un pedido por código **después** de colocado, no mientras está en `ArrangingPayment`, y la pantalla de resultado no podría consultar el estado. El plugin envuelve la estrategia configurada (`SessionOrderByCodeAccessStrategy`) y permite además leer el pedido activo de la propia sesión. Otra sesión sigue sin poder leerlo.
 
 ### 9.6 Flujo de compra (Checkout Pro)
@@ -325,11 +364,11 @@ Detalle de cada paso:
 ¿Por qué no `notification_url` por preferencia? [Diseño]
 - La URL definida en la preferencia tiene prioridad sobre la de la aplicación [Doc].
 - La documentación asocia la validación con clave secreta a la configuración en "Tus integraciones" y no aclara si las notificaciones a `notification_url` vienen firmadas.
-- El local se identifica con el campo `user_id` de la notificación, que Mercado Pago describe como identificador del vendedor [Doc], buscando la conexión con ese `mpUserId`.
+- La cuenta se identifica con el campo `user_id` de la notificación, que Mercado Pago describe como identificador del vendedor [Doc], buscando la cuenta con ese `mpUserId`. [Implementado] **El local no se deduce de la cuenta sino del pedido** (DEC-43): una cuenta puede haber vendido para varios locales a lo largo del tiempo.
 - Ver [Verificar] V1 y V2 en la sección 13. Si V1 falla, el plan B es usar `notification_url` con el canal en la ruta y apoyarse en la consulta al pago, que es la verificación de fondo de todas formas.
 
 [Implementado] Los dos modos están construidos y se eligen con `MP_WEBHOOK_MODE`:
-- **`application`** (por defecto, diseño principal): la preferencia no lleva `notification_url`. Mercado Pago llama a `POST /mercadopago/webhook`, la URL configurada en la aplicación, y el local se identifica por `user_id`.
+- **`application`** (por defecto, diseño principal): la preferencia no lleva `notification_url`. Mercado Pago llama a `POST /mercadopago/webhook`, la URL configurada en la aplicación, y la cuenta se identifica por `user_id`.
 - **`preference`** (plan B): cada preferencia lleva su `notification_url` con el token del canal en la ruta, `POST /mercadopago/webhook/:channelToken`. Con `MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE=true` (por defecto) se exige la firma; si V2 muestra que esas notificaciones vienen sin firma, se pone en `false` y el sistema sigue siendo seguro, porque la verdad es siempre la consulta del pago con el token del local (en ese modo cualquiera puede *provocar* una consulta, pero no cambiar el resultado). Los pasos para decidir están en `VERIFICATION.md` (V1 y V2).
 
 **Procesamiento**:
@@ -342,9 +381,11 @@ Detalle de cada paso:
 2. **Responder 200** enseguida. Mercado Pago espera la confirmación hasta **22 segundos** y si no la recibe reintenta, cada 15 minutos al principio y con intervalos crecientes después [Doc].
 3. **Encolar** el procesamiento en la job queue de Vendure [Diseño].
 4. En el worker:
-   - Buscar la conexión por `user_id`. Si no existe, descartar y registrar.
-   - **Consultar el pago** con `GET /v1/payments/{id}` usando el token del local, que es lo que indica Mercado Pago después de recibir la notificación [Doc]. **La notificación nunca es la fuente de verdad** [Diseño].
-   - Buscar el pedido por `external_reference` **dentro del canal** de ese local.
+   - Buscar la cuenta por `user_id`. Si no existe o no tiene tokens, descartar, registrar y avisar a la plataforma.
+   - **Consultar el pago** con `GET /v1/payments/{id}` usando el token de esa cuenta, que es lo que indica Mercado Pago después de recibir la notificación [Doc]. **La notificación nunca es la fuente de verdad** [Diseño].
+   - Buscar el pedido por `external_reference` **en todo el servidor** (el código del pedido es único en toda la base, no solo dentro de un canal) y tomar su canal.
+   - Exigir que ese canal tenga o haya tenido un vínculo (`active` o `retired`) con la cuenta. Si no, el resultado es `ignored` y se registra.
+   - Exigir que el `collector_id` del pago sea la cuenta consultada (9.5).
    - Validar que el monto sea igual al `totalWithTax` del pedido y la moneda ARS.
    - Aplicar la tabla de estados (9.8).
    - **Idempotencia**: si ya existe un Payment con ese `transactionId`, no hacer nada. Las notificaciones pueden repetirse [Diseño].
@@ -354,7 +395,9 @@ Detalle de cada paso:
 - **Idempotencia con dos mecanismos** (DEC-14), porque la comprobación "ya existe un Payment" no alcanza ante notificaciones concurrentes:
   - Tabla de reclamos `MercadoPagoPaymentClaim`, con índice único por `mpPaymentId` y estados `recorded`, `processing`, `settled` y `needs_review`. Solo quien gana el reclamo agrega el pago; un reclamo `processing` abandonado se retoma a los 5 minutos.
   - En PostgreSQL, cada liquidación toma un `pg_advisory_xact_lock` sobre el pedido. Sin él, **dos pagos aprobados distintos para un mismo pedido se liquidaban los dos** (verificado quitando el bloqueo en `e2e/concurrency.e2e-spec.ts`). El segundo queda en `needs_review` y se avisa al local, que decide si reembolsa.
-- **Pago inexistente o de otro canal**: si no hay conexión para el `user_id`, o el pedido no existe dentro del canal del local, el resultado es `ignored` y se registra.
+- **Asignación por pedido** (DEC-43). Modo `application`: la cuenta sale de `user_id`, el pedido de `external_reference` en todo el servidor, y el local es el canal de ese pedido. Modo `preference`: la ruta trae el token del canal; se prueban las cuentas de los vínculos `active` y `retired` de ese canal (solo la que nombra `user_id`, si viene) y además el pedido tiene que pertenecer al canal de la ruta: una notificación cuyo pedido es de otro canal se ignora. `syncMercadoPagoPayment`: las cuentas candidatas son las de los vínculos `active` y `retired` del canal del pedido. Así un contracargo de un local que ya no vende con una cuenta se asigna a ese local, y los pagos de un traspaso van al local de su pedido.
+- **Vínculo `released`**: si llega un pago aprobado para un vínculo `released` y la cuenta todavía tiene tokens (porque está `active` en otro local), se verifica y se procesa normalmente, y además se avisa a la plataforma (`released_link_payment`): indica que la regla de liberación falló. Si la cuenta no tiene tokens, el pago no se puede verificar: se avisa a la plataforma (`unverifiable_payment`) y no se descarta en silencio.
+- **Pago inexistente o ajeno**: si no hay cuenta para el `user_id`, el pedido no existe en ningún local, o el local nunca usó esa cuenta, el resultado es `ignored` y se registra. El resto de las validaciones (estado, referencia, moneda, monto exacto, reclamo, bloqueo por pedido, idempotencia) no cambió.
 
 ### 9.8 Correspondencia de estados [Diseño]
 
@@ -378,6 +421,7 @@ Caso borde [Diseño]: si el monto aprobado no coincide con el total del pedido (
 - El local **necesita saldo disponible** en su cuenta o el reembolso se rechaza [Doc]. El panel muestra ese error con claridad [Diseño].
 - **Cancelación**: solo para pagos `pending` o `in_process` [Doc].
 - Si Vendure no tiene `createRefund`, los reembolsos se marcan a mano [Doc]. Lo implementamos para que el local reembolse desde el panel.
+- [Implementado, DEC-46] **Cada reembolso y cada cancelación usa la cuenta que cobró el pago** (`metadata.mpAccountUserId`), aunque el local venda hoy con otra: un local que cambió de X a Y sigue pudiendo reembolsar lo que cobró con X mientras X esté `retired`. `cancelMercadoPagoPayment` prueba las cuentas de los vínculos `active` y `retired` del canal y comprueba que el pago pertenezca a un pedido de ese canal y que su `collector_id` sea la cuenta con la que se leyó. Si la cuenta está `released` o `disconnected`, el reembolso queda `Failed` con el mensaje de 9.5 y hay que hacerlo desde el panel de Mercado Pago de esa cuenta; por eso el dashboard avisa que no hay que revocar el acceso durante 180 días.
 - [Implementado, DEC-17] Si Mercado Pago rechaza el reembolso, el intento queda registrado en el pedido como reembolso `Failed` con el motivo en `metadata.errorMessage`. El texto exacto de Mercado Pago ante la falta de saldo y cómo se ve en el dashboard están por registrar (V15).
 - [Implementado, DEC-18] **Cancelación desde el panel**: Vendure solo ofrece `cancelPayment` para pagos que conoce, y este plugin nunca registra pagos pendientes (9.8). Para cumplir "cancelaciones desde el panel" se agregó la mutación `cancelMercadoPagoPayment(paymentId)` de la Admin API (permiso `UpdateOrder`), que cancela un pago `pending` o `in_process` del propio canal y deja una nota en el pedido.
 
@@ -434,6 +478,7 @@ Regla: si un frontend necesita algo de comercio que el paquete no tiene, se agre
   - El flujo completo de punta a punta se prueba con montos bajos en producción, con una cuenta real propia como local, antes del primer cliente.
 - Herramientas de prueba (Vitest, `@vendure/testing`, Playwright, `msw`): sección 16.7.
 - Casos obligatorios: pago aprobado, rechazado, pendiente que se aprueba más tarde, webhook duplicado, webhook que llega antes que la redirección y después, monto que no coincide, token vencido, local desconectado, reembolso total y parcial, reembolso sin saldo, e intento de vincular una cuenta de Mercado Pago que ya está conectada a otro local (tiene que rechazarse sin pisar la conexión existente).
+- [Implementado] Casos obligatorios de cuentas y vínculos, todos con prueba automática: cambio de cuenta de un local (el reembolso de un pago de la cuenta vieja funciona, un pago pendiente de la cuenta vieja que se aprueba después liquida su pedido, una preferencia creada con la cuenta vieja y pagada después liquida su pedido, y las preferencias nuevas usan la cuenta nueva); traspaso (el reembolso y el contracargo de una venta del primer local se le asignan a él, y los pagos del segundo van al segundo); vincular una cuenta `active` en otro local (se rechaza sin modificar nada); volver a vincular la misma cuenta al local donde estaba `retired` (se reactiva el vínculo); liberación (no libera si falta cualquiera de las dos condiciones, libera cuando se cumplen las dos, borra los tokens solo si la cuenta no tiene otros vínculos y los conserva si sigue `active` en otro local); reembolso de un pago cuyo vínculo está liberado (`Failed` con el mensaje de 9.5); pago aprobado para un vínculo `released` (con tokens se liquida y se avisa a la plataforma; sin tokens, se avisa); dos renovaciones simultáneas de una cuenta compartida por dos locales (un solo `refresh_token` gastado); elegibilidad (solo con un vínculo `active`, y una cuenta `disconnected` deja no elegibles a todos sus vínculos); modo `preference` con un pedido de otro canal que el de la ruta (se ignora); `collector_id` distinto y ausente (el pedido no se liquida, el reclamo queda en `needs_review` y se avisa); migración sobre una base con datos de la versión anterior; e índices únicos parciales contra PostgreSQL.
 
 ## 13. Riesgos y puntos a verificar en sandbox
 
@@ -448,11 +493,13 @@ Regla: si un frontend necesita algo de comercio que el paquete no tiene, se agre
 | V7 | Si conviene una línea por producto o una sola línea con el total en la preferencia (descuentos y envío) | Que lo que ve el comprador coincida con el total de Vendure | Una sola línea con el total y la descripción del pedido |
 | V8 | Que el calculator por defecto de Vendure sea tarifa fija exacta | Sección 8 | Calculator propio, que es trivial |
 | V9 | Que el `EmailPlugin` permita cambiar remitente y plantilla según el canal. La documentación confirma que el transporte y las variables globales de plantilla reciben el contexto con el canal, pero no dice que remitente y plantilla puedan variar | Los emails de pedido llevan la marca del local (sección 6.3) | Plantilla única con variables de marca por canal, o un `templateLoader` propio |
+| V19 | Que el `collector_id` de `GET /v1/payments/{id}` coincida con el `user_id` de la respuesta de `/oauth/token` y con el de la notificación (V1) para un mismo pago de un vendedor vinculado por OAuth, y que ese sea el nombre real del campo | La regla de 9.5 rechaza todo pago cuyo `collector_id` no sea la cuenta consultada | Detenerse y rediseñar la regla: hoy un `collector_id` distinto deja el pago en `needs_review`, así que si no coinciden ningún pago se liquidaría solo |
+| V20 | Si una autorización OAuth nueva de la misma cuenta anula los tokens anteriores | Una cuenta compartida por un vínculo `retired` y otro `active` usa un solo juego de tokens | Ninguno: el diseño funciona en los dos casos (la autorización nueva reemplaza los tokens de la cuenta) |
 | V10 | Que el servidor funcione con el SDK `mercadopago` 3.x (el paquete declara `main: dist/index.js` sin campo `type`, y su README usa `import`), que el SDK cubra el flujo OAuth y que `UuidIdStrategy` y `strict: true` no choquen con el scaffold de Vendure ni con el dashboard | Sección 16 | Usar `fetch` nativo para OAuth, ajustar la configuración de módulos y documentar en `DECISIONS.md` cualquier excepción |
 
 ### Estado de los puntos [Implementado]
 
-Un punto pasa a **Resuelto** solo con evidencia escrita en `VERIFICATION.md`. Los pendientes necesitan credenciales de Mercado Pago, y sus pasos están en la sección "Pruebas de sandbox" del mismo archivo. V11 a V18 aparecieron al implementar y no estaban en el PRD original.
+Un punto pasa a **Resuelto** solo con evidencia escrita en `VERIFICATION.md`. Los pendientes necesitan credenciales de Mercado Pago, y sus pasos están en la sección "Pruebas de sandbox" del mismo archivo. V11 a V20 aparecieron al implementar y no estaban en el PRD original. **V19 es el primero que hay que correr en sandbox**: si no coinciden los tres identificadores, hay que rediseñar la regla del `collector_id` antes de seguir.
 
 | # | Estado | Resultado |
 |---|---|---|
@@ -474,6 +521,8 @@ Un punto pasa a **Resuelto** solo con evidencia escrita en `VERIFICATION.md`. Lo
 | V16 | **Pendiente** | Parámetros reales de la redirección y demora de `auto_return`. La tienda no depende de ellos |
 | V17 | **Pendiente** | Si el `scope` devuelto incluye `offline_access`; plan B `MP_REQUIRE_OFFLINE_ACCESS=false` |
 | V18 | **Pendiente** | Unidad de `ts` en `x-signature`. El sistema acepta las dos |
+| V19 | **Pendiente** | `collector_id` existe en la respuesta del pago (campo numérico de primer nivel, según los ejemplos de la documentación regional), pero la documentación oficial no dice que sea el mismo `user_id` del OAuth. La regla es segura ante la duda: si no coincide, rechaza y avisa |
+| V20 | **Pendiente** | Se prueba con una segunda autorización de la misma cuenta. El diseño no depende del resultado |
 
 **Riesgo para el futuro (fuera del MVP)**: la página de Split de Pagos 1:1 de Argentina dice que solo permite pagos con dinero en cuenta entre cuentas de Mercado Pago, y que en un reembolso el marketplace no puede devolver el total si el vendedor no tiene saldo [Doc]. La guía de Checkout Pro para marketplaces de Argentina no menciona esa restricción [Doc]. Antes de cobrar comisión por venta hay que aclararlo con Mercado Pago.
 
@@ -546,7 +595,7 @@ Esta sección fija las tecnologías y versiones del proyecto. Las versiones se v
 │   │   ├── src/platform/           alta de locales, permisos, checker de envío, campos propios
 │   │   ├── src/email/              emails con marca por canal y avisos de atención
 │   │   ├── src/migrations/         inicial, Mercado Pago y plataforma
-│   │   ├── src/scripts/            provision-store, seed-demo, refresh-connections
+│   │   ├── src/scripts/            provision-store, seed-demo, refresh-connections, release-links
 │   │   ├── email-templates/        plantillas de la plataforma y por local
 │   │   └── e2e/                    pruebas de alta de locales y de emails
 │   └── storefront-reference/       Next.js que consume commerce-core (con su Dockerfile y E2E)
@@ -559,7 +608,7 @@ Esta sección fija las tecnologías y versiones del proyecto. Las versiones se v
 - Para el esqueleto del servidor se puede partir de `npx @vendure/create` con PostgreSQL elegido en la configuración manual. Con una tienda incluida, el instalador genera una estructura `apps/server` y `apps/storefront` [Doc]. Se usa solo como punto de partida y se adapta a la estructura de arriba.
 - El storefront de referencia **no se basa** en el starter oficial de Vendure: el objetivo es demostrar `commerce-core`, así que se escribe mínimo sobre ese paquete. El starter oficial sirve como ejemplo de cómo se estructura un storefront con Next.js.
 - Scripts de la raíz: `dev`, `build`, `test`, `lint`, `typecheck` y `codegen`. En `apps/server`: `start:server` y `start:worker`, más `build:dashboard` para compilar el dashboard [Doc, nombres tomados de la guía de Docker].
-- [Implementado] Scripts de la raíz que se sumaron: `test:e2e` (Playwright), `format`, `verify` (lint, tipos, build y pruebas en una sola corrida), `infra:up` e `infra:down` (solo la infraestructura de Compose), `provision-store`, `seed-demo` y `refresh-connections`. `npm run dev` compila antes el plugin y `commerce-core`, y levanta el servidor con su worker (`vendure dev all`) y la tienda juntos.
+- [Implementado] Scripts de la raíz que se sumaron: `test:e2e` (Playwright), `format`, `verify` (lint, tipos, build y pruebas en una sola corrida), `infra:up` e `infra:down` (solo la infraestructura de Compose), `provision-store`, `seed-demo`, `refresh-connections` y `release-links`. `npm run dev` compila antes el plugin y `commerce-core`, y levanta el servidor con su worker (`vendure dev all`) y la tienda juntos.
 
 ### 16.4 Servidor Vendure
 
@@ -593,8 +642,8 @@ Esta sección fija las tecnologías y versiones del proyecto. Las versiones se v
 - Cifrado de tokens con AES-256-GCM usando el módulo `crypto` de Node, sin dependencias extra. La clave viene de una variable de entorno.
 - Entidades propias del plugin (sección 9.3) con migración incluida.
 - Extiende la Shop API con `createMercadoPagoCheckout` y `syncMercadoPagoPayment`, y expone un controlador HTTP para el webhook y para el retorno de OAuth.
-- [Implementado] Además extiende la Admin API con `mercadoPagoConnection`, `startMercadoPagoConnection`, `disconnectMercadoPago` y `cancelMercadoPagoPayment`, agrega el permiso `ManageMercadoPago`, la tarea programada de renovación, la página "Mercado Pago" del dashboard y la estrategia de lectura del propio pedido (9.5). Tiene un `index.ts` en la raíz del paquete: como está enlazado en el workspace, el descubrimiento de plugins del dashboard lo lee como fuente y lo necesita (DEC-34).
-- [Implementado, DEC-34] **Página del dashboard**: Ajustes › Mercado Pago permite ver el estado, vincular, volver a vincular y desvincular la cuenta. Usa solo las operaciones de conexión de arriba, que nunca devuelven tokens. El código se publica como fuente en `dist/dashboard` (copiado por `npm run build`) y el build del dashboard lo compila con la app.
+- [Implementado] Además extiende la Admin API con `mercadoPagoConnection`, `mercadoPagoPreviousAccounts`, `startMercadoPagoConnection`, `disconnectMercadoPago` y `cancelMercadoPagoPayment`, y con las herramientas del superadmin `mercadoPagoChannelLinks`, `mercadoPagoReleasePreview`, `retireMercadoPagoAccount` y `releaseMercadoPagoLink` (9.4), agrega el permiso `ManageMercadoPago`, las tareas programadas de renovación y de liberación de vínculos, la página "Mercado Pago" del dashboard y la estrategia de lectura del propio pedido (9.5). Tiene un `index.ts` en la raíz del paquete: como está enlazado en el workspace, el descubrimiento de plugins del dashboard lo lee como fuente y lo necesita (DEC-34).
+- [Implementado, DEC-34] **Página del dashboard**: Ajustes › Mercado Pago permite ver el estado, vincular otra cuenta y desvincular la actual, y lista las cuentas anteriores con su estado y su fecha de liberación (9.4). Usa solo las operaciones de conexión de arriba, que nunca devuelven tokens. El código se publica como fuente en `dist/dashboard` (copiado por `npm run build`) y el build del dashboard lo compila con la app.
 - [Implementado] Los módulos puros (cifrado, montos, PKCE, firma, estados y validación de pagos) viven en `src/lib` con pruebas unitarias, separados de los servicios que tocan la base o la red.
 
 ### 16.6 `commerce-core` y frontends [Diseño]
@@ -632,7 +681,7 @@ Esta sección fija las tecnologías y versiones del proyecto. Las versiones se v
 | Grupo | Variables |
 |---|---|
 | General | `PORT`, `TRUST_PROXY`, `DB_SYNCHRONIZE` (solo desarrollo), `PLATFORM_NAME`, `PLATFORM_ALERT_EMAIL` |
-| Mercado Pago | `MP_WEBHOOK_MODE` (`application` o `preference`), `MP_OAUTH_TEST_TOKEN`, `MP_WEBHOOK_TOLERANCE_SECONDS`, `MP_PREFERENCE_TTL_MINUTES`, `MP_DASHBOARD_URL`, `MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE`, `MP_PREFERENCE_ITEMS_MODE` (`lines` o `total`), `MP_REQUIRE_OFFLINE_ACCESS`, `MP_AUTH_URL`, `MP_ALLOW_INSECURE_RETURN_URLS` (solo pruebas) |
+| Mercado Pago | `MP_WEBHOOK_MODE` (`application` o `preference`), `MP_OAUTH_TEST_TOKEN`, `MP_WEBHOOK_TOLERANCE_SECONDS`, `MP_PREFERENCE_TTL_MINUTES`, `MP_DASHBOARD_URL`, `MP_REQUIRE_SIGNATURE_IN_PREFERENCE_MODE`, `MP_PREFERENCE_ITEMS_MODE` (`lines` o `total`), `MP_RELEASE_AFTER_LAST_PAYMENT_DAYS` (180 por defecto) y `MP_RELEASE_AFTER_RETIRED_DAYS` (30), `MP_REQUIRE_OFFLINE_ACCESS`, `MP_AUTH_URL`, `MP_ALLOW_INSECURE_RETURN_URLS` (solo pruebas) |
 | Almacenamiento | `S3_FORCE_PATH_STYLE`, `ASSET_URL_PREFIX` |
 | Tienda | `VENDURE_SHOP_API_URL`, `VENDURE_CHANNEL_TOKEN`, `STOREFRONT_PUBLIC_URL`, `STORE_NAME`, `PAYMENT_SYNC_AFTER_MS` |
 
@@ -708,7 +757,7 @@ Se resuelven antes de salir a producción. El código tiene que quedar sin depen
 
 ## 18. Estado de la implementación [Implementado]
 
-Esta sección resume qué se construyó respecto de este documento. El detalle está en `PLAN.md` (tareas y criterios de terminado), `DECISIONS.md` (DEC-1 a DEC-40) y `VERIFICATION.md` (puntos de la sección 13 y pasos de sandbox).
+Esta sección resume qué se construyó respecto de este documento. El detalle está en `PLAN.md` (tareas y criterios de terminado), `DECISIONS.md` (DEC-1 a DEC-51) y `VERIFICATION.md` (puntos de la sección 13 y pasos de sandbox).
 
 ### 18.1 Criterios de terminado
 
@@ -723,7 +772,7 @@ Esta sección resume qué se construyó respecto de este documento. El detalle e
 
 ### 18.2 Dónde la implementación se apartó del diseño
 
-Solo el punto 1 es un desvío del PRD. El resto son decisiones que el PRD no cubría o cosas que resultaron distintas de lo supuesto.
+Solo el punto 1 es un desvío del PRD. El resto son decisiones que el PRD no cubría o cosas que resultaron distintas de lo supuesto. Los puntos 13 a 17 son el cambio de diseño de la versión 1.3.
 
 | # | Qué | Sección | Referencia |
 |---|---|---|---|
@@ -739,12 +788,17 @@ Solo el punto 1 es un desvío del PRD. El resto son decisiones que el PRD no cub
 | 10 | `mp-connect` no se interpreta: se pregunta a Mercado Pago | 9.4 | DEC-16 |
 | 11 | El mismo email como invitado en dos tiendas es un solo Customer | 6.2 | V5 |
 | 12 | `module: nodenext` en servidor y plugin, por NestJS 12 solo ESM | 16.2 | DEC-12 |
+| 13 | Cuenta y vínculo separados: cambiar de cuenta o traspasarla no pierde reembolsos, pagos tardíos ni contracargos; desvincular retira en vez de borrar y una tarea libera los vínculos sin nada que reembolsar | 9.2 a 9.4, 9.7, 9.9 | DEC-41, DEC-43, DEC-45 a DEC-50 |
+| 14 | El `collector_id` tiene que ser la cuenta consultada; si no, el pago queda en `needs_review` y no hay variable para desactivarlo | 9.5, 9.7 | DEC-44, V19 |
+| 15 | Una cuenta revocada que sigue `active` en un local no la puede tomar otro: se corrige la frase de 9.2 | 9.2 | DEC-42 |
+| 16 | Un pago ya verificado se liquida aunque el local ya no ofrezca el método (alcance de liquidación) | 9.4, 9.5 | DEC-45 |
+| 17 | Riesgos conocidos que quedan abiertos a propósito: vínculo `retired` sin límite de fecha para los pagos de su cuenta, y pagos de vínculos `released` en modo `preference` | 9.7 | DEC-51 |
 
 ### 18.3 Qué falta
 
 | Tema | Quién | Cómo |
 |---|---|---|
-| Sandbox real: V1, V2, V6, V7 y V12 a V18, y la compra completa contra Mercado Pago | Responsable, con credenciales | `VERIFICATION.md` › Pruebas de sandbox |
+| Sandbox real: **V19 primero**, y después V1, V2, V6, V7, V12 a V18 y V20, y la compra completa contra Mercado Pago | Responsable, con credenciales | `VERIFICATION.md` › Pruebas de sandbox |
 | Hosting, proveedor S3, SMTP, dominios y titularidad de la aplicación de Mercado Pago | Responsable | Sección 16.9 y `docs/DEPLOYMENT.md` |
 | Compra real de monto bajo de punta a punta antes del primer cliente | Responsable | Lista de control de `VERIFICATION.md` |
 | Política de privacidad (la cuenta es compartida, V5) | Responsable | Sección 6.3 |

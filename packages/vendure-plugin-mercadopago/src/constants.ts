@@ -6,6 +6,7 @@ export const MERCADOPAGO_HANDLER_CODE = 'mercado-pago';
 
 export const WEBHOOK_QUEUE_NAME = 'mercadopago-webhook';
 export const REFRESH_TASK_ID = 'mercadopago-refresh-connections';
+export const RELEASE_TASK_ID = 'mercadopago-release-links';
 
 export const OFFLINE_ACCESS_SCOPE = 'offline_access';
 export const MERCADOPAGO_API_URL = 'https://api.mercadopago.com';

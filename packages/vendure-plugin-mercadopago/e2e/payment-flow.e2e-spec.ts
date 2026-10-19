@@ -58,6 +58,7 @@ function mpPayment(
     currency_id: 'ARS',
     external_reference: order.code,
     ownerToken: grant.access_token,
+    collector_id: grant.user_id,
     ...overrides,
   });
 }
@@ -384,7 +385,10 @@ describe('multi-tenancy', () => {
   it('never settles an order of one store with a payment owned by another store', async () => {
     const order = await checkoutAsGuest(shopClient, store, payable);
     // The payment exists in the OTHER seller's account and points at this store's order code.
-    const foreign = mpPayment(order, { ownerToken: otherGrant.access_token });
+    const foreign = mpPayment(order, {
+      ownerToken: otherGrant.access_token,
+      collector_id: otherGrant.user_id,
+    });
 
     // Notification attributed to the other store's seller: looked up with the other store's token,
     // in the other store's channel, where that order code does not exist.
@@ -400,7 +404,10 @@ describe('multi-tenancy', () => {
     const mine = await checkoutAsGuest(shopClient, store, payable);
     const theirs = await checkoutAsGuest(shopClient, otherStore, otherPayable);
     const myPayment = mpPayment(mine);
-    const theirPayment = mpPayment(theirs, { ownerToken: otherGrant.access_token });
+    const theirPayment = mpPayment(theirs, {
+      ownerToken: otherGrant.access_token,
+      collector_id: otherGrant.user_id,
+    });
 
     await process(myPayment.id, SELLER);
     await process(theirPayment.id, OTHER_SELLER);
@@ -506,7 +513,10 @@ describe('store disconnected or token expired (PRD 9.4, 12)', () => {
   it('stops offering Mercado Pago once the store is disconnected, and processes nothing', async () => {
     const order = await checkoutAsGuest(shopClient, store, payable);
     const payment = mpPayment(order);
-    await connections.markDisconnected(store.channelId, 'revoked');
+    await connections.markDisconnected(
+      (await connections.findActiveAccount(store.channelId))!.id,
+      'revoked',
+    );
 
     const { eligiblePaymentMethods } = await shopClient.query(eligibility);
     await process(payment.id);
@@ -552,11 +562,11 @@ describe('malformed notifications', () => {
 
 async function expireToken() {
   const { TransactionalConnection } = await import('@vendure/core');
-  const { MercadoPagoConnection } = await import('../src');
+  const { MercadoPagoAccount } = await import('../src');
   await server.app
     .get(TransactionalConnection)
-    .rawConnection.getRepository(MercadoPagoConnection)
-    .update({ channelId: store.channelId }, { expiresAt: new Date(Date.now() - 1000) });
+    .rawConnection.getRepository(MercadoPagoAccount)
+    .update({ mpUserId: String(SELLER) }, { expiresAt: new Date(Date.now() - 1000) });
 }
 
 const SYNC = gql`
