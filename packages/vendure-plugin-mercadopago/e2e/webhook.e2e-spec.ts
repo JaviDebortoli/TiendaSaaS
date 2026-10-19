@@ -7,8 +7,10 @@ import {
   PayableStore,
   provisionStore,
   readOrder,
+  referenceFields,
   sendWebhook,
   STOREFRONT_URL,
+  useIssuer,
   waitFor,
 } from './shop-helpers';
 import { createMpTestEnvironment, createStore, TestStore } from './test-env';
@@ -37,7 +39,7 @@ function approvedPayment(order: { code: string; totalWithTax: number }) {
     status: 'approved',
     transaction_amount: order.totalWithTax / 100,
     currency_id: 'ARS',
-    external_reference: order.code,
+    ...referenceFields(order),
     ownerToken: grant.access_token,
     collector_id: grant.user_id,
   });
@@ -54,6 +56,7 @@ const settleQueue = () => new Promise((resolve) => setTimeout(resolve, 700));
 beforeAll(async () => {
   mp.start();
   await init();
+  useIssuer(server.app);
   connections = server.app.get(MercadoPagoConnectionService);
   store = await createStore(adminClient, 'wh-a', { storefrontUrl: STOREFRONT_URL });
   revokedStore = await createStore(adminClient, 'wh-b', { storefrontUrl: STOREFRONT_URL });

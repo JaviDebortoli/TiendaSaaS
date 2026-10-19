@@ -13,6 +13,7 @@ import { Channel, Logger, TransactionalConnection } from '@vendure/core';
 import type { Response } from 'express';
 import { loggerCtx, MP_PLUGIN_OPTIONS } from '../constants';
 import { verifyWebhookSignature } from '../lib/signature';
+import { REGISTRY_TOKEN_PATTERN } from '../services/preference-registry.service';
 import { MercadoPagoWebhookService } from '../services/webhook.service';
 import type { ResolvedMercadoPagoOptions } from '../types';
 
@@ -111,6 +112,8 @@ export class MercadoPagoWebhookController {
     const topic = query.type ?? query.topic ?? body?.type ?? body?.topic;
     const dataId = queryDataId ?? body?.data?.id ?? (requireSignature ? undefined : query.id);
     const mpUserId = body?.user_id !== undefined ? String(body.user_id) : undefined;
+    // Only the per-preference route (`notification_url`) carries the registry identifier.
+    const ref = query.ref;
 
     // One line per accepted notification: it is the evidence needed to settle V1, V2 and V13.
     Logger.info(
@@ -127,6 +130,8 @@ export class MercadoPagoWebhookController {
         mpPaymentId: String(dataId),
         mpUserId,
         channelId,
+        preferenceRef:
+          channelId !== undefined && REGISTRY_TOKEN_PATTERN.test(ref ?? '') ? ref : undefined,
       });
     } else if (topic === 'mp-connect') {
       if (!mpUserId) {

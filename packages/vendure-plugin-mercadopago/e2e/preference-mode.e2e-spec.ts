@@ -1,15 +1,19 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import gql from 'graphql-tag';
-import { MercadoPagoConnectionService } from '../src';
+import { MercadoPagoConnectionService, MercadoPagoPreferenceRegistry } from '../src';
 import { MercadoPagoMock, OAuthGrant } from './mp-mock';
 import {
   BACK_URLS,
   checkoutAsGuest,
+  issuedFor,
+  issuePreference,
   PayableStore,
   provisionStore,
   readOrder,
+  referenceFields,
   sendWebhook,
   STOREFRONT_URL,
+  useIssuer,
   waitFor,
 } from './shop-helpers';
 import { createMpTestEnvironment, createStore, TestStore } from './test-env';
@@ -47,7 +51,7 @@ const payment = (order: { code: string; totalWithTax: number }) =>
     status: 'approved',
     transaction_amount: order.totalWithTax / 100,
     currency_id: 'ARS',
-    external_reference: order.code,
+    ...referenceFields(order),
     ownerToken: grant.access_token,
     collector_id: grant.user_id,
   });
@@ -62,6 +66,7 @@ const post = (path: string, query: Record<string, string>, body: unknown = {}) =
 beforeAll(async () => {
   mp.start();
   await init();
+  useIssuer(server.app);
   connections = server.app.get(MercadoPagoConnectionService);
   store = await createStore(adminClient, 'pm-a', { storefrontUrl: STOREFRONT_URL });
   payable = await provisionStore(adminClient, store, { shippingRate: 500 });
@@ -89,8 +94,14 @@ describe('webhookMode "preference"', () => {
     );
 
     const body = mp.requestsTo('POST', '/checkout/preferences').at(-1)!.body!;
+    // The URL carries the store and the identifier of this very preference: that is how the
+    // account that reads its payments is found without trying any.
+    const entry = (await server.app
+      .get(MercadoPagoPreferenceRegistry)
+      .findByExternalReference(String(body.external_reference)))!;
+    expect(entry.orderCode).toBe(order.code);
     expect(body.notification_url).toBe(
-      'https://platform.example.test/mercadopago/webhook/pm-a-token?source_news=webhooks',
+      `https://platform.example.test/mercadopago/webhook/pm-a-token?source_news=webhooks&ref=${entry.token}`,
     );
   });
 
@@ -131,6 +142,7 @@ describe('webhookMode "preference"', () => {
     const response = await post('/mercadopago/webhook/pm-a-token', {
       topic: 'payment',
       id: String(approved.id),
+      ref: issuedFor(order).token,
     });
 
     expect(response.status).toBe(200);
@@ -157,6 +169,25 @@ describe('webhookMode "preference"', () => {
     await new Promise((resolve) => setTimeout(resolve, 700));
 
     expect(response.status).toBe(200);
+    expect((await readOrder(adminClient, store, order.code)).state).toBe('ArrangingPayment');
+  });
+
+  it('ignores a notification whose identifier is not a registry one, asking Mercado Pago nothing', async () => {
+    const order = await checkoutAsGuest(shopClient, store, payable);
+    const approved = payment(order);
+    mp.requests = [];
+
+    for (const ref of ['not-a-token', 'A'.repeat(22), "' OR 1=1 --", 'x'.repeat(500)]) {
+      const response = await post('/mercadopago/webhook/pm-a-token', {
+        topic: 'payment',
+        id: String(approved.id),
+        ref,
+      });
+      expect(response.status).toBe(200);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    expect(mp.requestsTo('GET', `/v1/payments/${approved.id}`)).toHaveLength(0);
     expect((await readOrder(adminClient, store, order.code)).state).toBe('ArrangingPayment');
   });
 
@@ -258,7 +289,7 @@ describe('webhookMode "preference" with several accounts (PRD 9.7)', () => {
       status: 'approved',
       transaction_amount: order.totalWithTax / 100,
       currency_id: 'ARS',
-      external_reference: order.code,
+      ...referenceFields(order),
       ownerToken: accountGrant.access_token,
       collector_id: accountGrant.user_id,
       ...overrides,
@@ -276,11 +307,14 @@ describe('webhookMode "preference" with several accounts (PRD 9.7)', () => {
 
   it('settles a payment of the account the store retired, on the route of the store', async () => {
     const order = await checkoutAsGuest(shopClient, changed, changedPayable);
+    // The order was placed while the store still sold with the old account.
+    await issuePreference(server.app, order, { mpUserId: String(OLD) });
     const approved = forAccount(order, grantOf(OLD));
 
     const response = await post('/mercadopago/webhook/pm-change-token', {
       topic: 'payment',
       id: String(approved.id),
+      ref: issuedFor(order).token,
     });
 
     expect(response.status).toBe(200);
@@ -289,27 +323,47 @@ describe('webhookMode "preference" with several accounts (PRD 9.7)', () => {
       (o) => o.state === 'PaymentSettled',
     );
     expect(settled.payments).toHaveLength(1);
-    // The account the store sells with answered 404 first; the retired one saw the payment.
+    // The account of the preference read the payment first, and it was the only one asked. (The
+    // handler checks the payment again before settling and may try the accounts the platform
+    // issued preferences with for that order, which here include the new one.)
     const tokens = mp.requestsTo('GET', `/v1/payments/${approved.id}`).map((r) => r.authorization);
-    expect(tokens.slice(0, 2)).toEqual([
-      `Bearer APP_USR-pref-${NEW}`,
-      `Bearer APP_USR-pref-${OLD}`,
-    ]);
+    expect(tokens[0]).toBe(`Bearer APP_USR-pref-${OLD}`);
   });
 
-  it('ignores a notification whose order belongs to another store than the one of the route', async () => {
+  it('ignores a notification whose preference belongs to another store than the route', async () => {
+    const mine = await checkoutAsGuest(shopClient, changed, changedPayable);
     const orderOfOther = await checkoutAsGuest(shopClient, other, otherPayable);
-    // A payment collected by the account of "pm-change", pointing at an order of "pm-other".
-    const approved = forAccount(orderOfOther, grantOf(NEW));
+    const paymentOfOther = forAccount(orderOfOther, grantOf(9106));
+    mp.requests = [];
 
+    // The route of "pm-change" with the identifier of a preference of "pm-other".
     const response = await post('/mercadopago/webhook/pm-change-token', {
       topic: 'payment',
-      id: String(approved.id),
+      id: String(paymentOfOther.id),
+      ref: issuedFor(orderOfOther).token,
     });
     await new Promise((resolve) => setTimeout(resolve, 700));
 
     expect(response.status).toBe(200);
     expect((await readOrder(adminClient, other, orderOfOther.code)).state).toBe('ArrangingPayment');
-    expect(mp.requestsTo('GET', `/v1/payments/${approved.id}`).length).toBeGreaterThan(0);
+    expect(mp.requestsTo('GET', `/v1/payments/${paymentOfOther.id}`)).toHaveLength(0);
+    void mine;
+  });
+
+  it('ignores a payment of another store that arrives on the route with a preference of the store', async () => {
+    const mine = await checkoutAsGuest(shopClient, changed, changedPayable);
+    const orderOfOther = await checkoutAsGuest(shopClient, other, otherPayable);
+    const paymentOfOther = forAccount(orderOfOther, grantOf(9106));
+
+    // The identifier is the store's own, but the payment carries the reference of the other store.
+    await post('/mercadopago/webhook/pm-change-token', {
+      topic: 'payment',
+      id: String(paymentOfOther.id),
+      ref: issuedFor(mine).token,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    expect((await readOrder(adminClient, other, orderOfOther.code)).state).toBe('ArrangingPayment');
+    expect((await readOrder(adminClient, changed, mine.code)).state).toBe('ArrangingPayment');
   });
 });

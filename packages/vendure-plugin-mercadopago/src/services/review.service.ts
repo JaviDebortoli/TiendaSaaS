@@ -13,7 +13,12 @@ import { isUniqueViolation } from '../lib/db';
 /** Reasons a payment that Mercado Pago approved ends up waiting for a person. */
 export type ReviewReason = Extract<
   AttentionReason,
-  'amount_mismatch' | 'order_not_payable' | 'collector_mismatch' | 'collector_missing'
+  | 'amount_mismatch'
+  | 'order_not_payable'
+  | 'collector_mismatch'
+  | 'collector_missing'
+  | 'unknown_preference'
+  | 'preference_mismatch'
 >;
 
 function reviewMessage(
@@ -28,6 +33,10 @@ function reviewMessage(
       return `${prefix} does not match the order total (${detail}). It was not added to the order: review it and refund if needed.`;
     case 'collector_mismatch':
       return `${prefix} was read with the token of Mercado Pago account ${detail}, but Mercado Pago says account ${observed ?? '(unknown)'} collected it. It was not added to the order: review it in Mercado Pago and refund if needed.`;
+    case 'unknown_preference':
+      return `${prefix} does not belong to a preference this platform issued for the order: ${detail}. It was not added to the order: review it in Mercado Pago and refund if needed.`;
+    case 'preference_mismatch':
+      return `${prefix} belongs to preference ${observed ?? '(unknown)'}, not to the one the platform issued for its reference (${detail}). It was not added to the order: review it in Mercado Pago and refund if needed.`;
     case 'collector_missing':
       return `${prefix} was read with the token of Mercado Pago account ${detail}, but Mercado Pago did not say which account collected it. It was not added to the order: review it in Mercado Pago and refund if needed.`;
     default:

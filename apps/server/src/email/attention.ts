@@ -65,6 +65,20 @@ const TEXTS: Record<AttentionReason, { title: string; message: string; action: s
     action:
       'Revisá el pago en Mercado Pago. Si es legítimo, reembolsalo desde ahí o avisá a la plataforma para resolverlo.',
   },
+  unknown_preference: {
+    title: 'Un pago aprobado no viene de una preferencia emitida para el pedido',
+    message:
+      'Mercado Pago aprobó un pago que no pertenece a ninguna preferencia que la plataforma haya emitido para el pedido (o no se pudo comprobar de cuál viene). Por seguridad no se agregó al pedido.',
+    action:
+      'Revisá el pago en Mercado Pago. Si es legítimo, reembolsalo desde ahí o avisá a la plataforma para resolverlo.',
+  },
+  preference_mismatch: {
+    title: 'Un pago aprobado viene de otra preferencia que la emitida para el pedido',
+    message:
+      'Mercado Pago aprobó un pago que repite la referencia de un pedido pero pertenece a otra preferencia que la que emitió la plataforma. Por seguridad no se agregó al pedido.',
+    action:
+      'Revisá el pago en Mercado Pago. Si es legítimo, reembolsalo desde ahí o avisá a la plataforma para resolverlo.',
+  },
   link_released: {
     title: 'Se liberó una cuenta de Mercado Pago anterior de tu tienda',
     message:
@@ -92,6 +106,8 @@ const PLATFORM_REASONS = new Set<AttentionReason>([
   'account_disconnected',
   'collector_mismatch',
   'collector_missing',
+  'unknown_preference',
+  'preference_mismatch',
   'released_link_payment',
   'unverifiable_payment',
 ]);

@@ -13,6 +13,8 @@ export type WebhookJob =
       mpUserId?: string;
       /** Set when the notification arrived on the per-channel `notification_url` route. */
       channelId?: string | number;
+      /** The registry identifier that route's `notification_url` carries: it names the preference. */
+      preferenceRef?: string;
     }
   | { kind: 'connect'; mpUserId: string };
 
@@ -71,6 +73,7 @@ export class MercadoPagoWebhookService implements OnModuleInit {
       mpPaymentId: job.mpPaymentId,
       mpUserId: job.mpUserId,
       channelId: job.channelId,
+      preferenceRef: job.preferenceRef,
     });
     Logger.info(
       `Payment ${job.mpPaymentId}: ${result.outcome}${'reason' in result ? ` (${result.reason})` : ''}`,

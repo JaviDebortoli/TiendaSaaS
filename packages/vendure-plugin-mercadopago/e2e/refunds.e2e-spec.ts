@@ -9,7 +9,9 @@ import {
   PayableStore,
   provisionStore,
   readOrder,
+  referenceFields,
   STOREFRONT_URL,
+  useIssuer,
 } from './shop-helpers';
 import {
   asStoreAdmin,
@@ -53,7 +55,7 @@ function mpPayment(order: { code: string; totalWithTax: number }, overrides = {}
     status: 'approved',
     transaction_amount: order.totalWithTax / 100,
     currency_id: 'ARS',
-    external_reference: order.code,
+    ...referenceFields(order),
     ownerToken: grant.access_token,
     collector_id: grant.user_id,
     ...overrides,
@@ -140,6 +142,7 @@ async function refund(code: string, lineIndexes: number[]) {
 beforeAll(async () => {
   mp.start();
   await init();
+  useIssuer(server.app);
   connections = server.app.get(MercadoPagoConnectionService);
   webhooks = server.app.get(MercadoPagoWebhookService);
   store = await createStore(adminClient, 'rf-a', { storefrontUrl: STOREFRONT_URL });

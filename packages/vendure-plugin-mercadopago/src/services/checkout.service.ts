@@ -14,6 +14,7 @@ import { toMercadoPagoAmount } from '../lib/amounts';
 import type { ResolvedMercadoPagoOptions } from '../types';
 import { MercadoPagoNotConnectedError, MercadoPagoConnectionService } from './connection.service';
 import { MercadoPagoApiError, MercadoPagoApiService } from './mercadopago-api.service';
+import { MercadoPagoPreferenceRegistry } from './preference-registry.service';
 
 export type CheckoutErrorReason =
   | 'ORDER_NOT_FOUND'
@@ -61,6 +62,7 @@ export class MercadoPagoCheckoutService {
     private readonly activeOrderService: ActiveOrderService,
     private readonly orderService: OrderService,
     private readonly connections: MercadoPagoConnectionService,
+    private readonly registry: MercadoPagoPreferenceRegistry,
     private readonly api: MercadoPagoApiService,
     @Inject(MP_PLUGIN_OPTIONS) private readonly options: ResolvedMercadoPagoOptions,
   ) {}
@@ -103,12 +105,11 @@ export class MercadoPagoCheckoutService {
     }
     this.assertBackUrls(ctx.channel, urls);
 
+    const link = await this.connections.findActiveLink(ctx.channelId);
     let accessToken: string;
-    let mpUserId: string;
     try {
-      const token = await this.connections.getAccessToken(ctx.channelId);
-      accessToken = token.accessToken;
-      mpUserId = token.account.mpUserId;
+      if (!link) throw new MercadoPagoNotConnectedError();
+      ({ accessToken } = await this.connections.getAccountToken(link.account));
     } catch (error) {
       if (error instanceof MercadoPagoNotConnectedError) {
         throw new CheckoutError('NOT_CONNECTED', 'This store cannot take payments right now.');
@@ -118,30 +119,13 @@ export class MercadoPagoCheckoutService {
 
     const windowStart = Math.floor(Date.now() / IDEMPOTENCY_WINDOW_MS) * IDEMPOTENCY_WINDOW_MS;
     const expiresAt = new Date(windowStart + this.options.preferenceTtlMinutes * 60_000);
-    const body = {
-      items: this.buildItems(order),
-      payer: this.buildPayer(order),
-      back_urls: { success: urls.successUrl, failure: urls.failureUrl, pending: urls.pendingUrl },
-      auto_return: 'approved' as const,
-      external_reference: order.code,
-      expires: true,
-      expiration_date_from: new Date(windowStart).toISOString(),
-      expiration_date_to: expiresAt.toISOString(),
-      metadata: { channel_code: ctx.channel.code, order_code: order.code },
-      // Application mode sends no `notification_url`: the app-level webhook is used (PRD 9.7).
-      ...(this.options.webhookMode === 'preference'
-        ? {
-            notification_url: `${this.options.publicUrl.replace(/\/$/, '')}/mercadopago/webhook/${ctx.channel.token}?source_news=webhooks`,
-          }
-        : {}),
-    };
     const idempotencyKey = createHash('sha256')
       // The account is part of the key: a store that changes account inside the window must not
       // reuse a key Mercado Pago may have bound to the previous token.
       .update(
         JSON.stringify([
           ctx.channelId,
-          mpUserId,
+          link!.account.mpUserId,
           order.code,
           order.totalWithTax,
           urls,
@@ -149,9 +133,43 @@ export class MercadoPagoCheckoutService {
         ]),
       )
       .digest('hex');
+    // The preference is recorded before Mercado Pago is called (PRD 9.6, 9.7): a payment settles
+    // this order only if it belongs to a preference found here. Repeating the request inside the
+    // window finds the same row, so the body (and Mercado Pago's idempotency) stays identical.
+    const issued = await this.registry.issue({
+      orderId: order.id,
+      orderCode: order.code,
+      channelId: ctx.channelId,
+      accountId: link!.accountId,
+      linkId: link!.id,
+      totalWithTax: order.totalWithTax,
+      idempotencyKey,
+    });
+    const body = {
+      items: this.buildItems(order),
+      payer: this.buildPayer(order),
+      back_urls: { success: urls.successUrl, failure: urls.failureUrl, pending: urls.pendingUrl },
+      auto_return: 'approved' as const,
+      // `<order code>-<identifier>`: the order code alone could be repeated by anyone who holds an
+      // account and knows it (PRD 9.7).
+      external_reference: issued.externalReference,
+      expires: true,
+      expiration_date_from: new Date(windowStart).toISOString(),
+      expiration_date_to: expiresAt.toISOString(),
+      metadata: { channel_code: ctx.channel.code, order_code: order.code },
+      // Application mode sends no `notification_url`: the app-level webhook is used (PRD 9.7). In
+      // `preference` mode the URL carries the store and the identifier of this preference, which
+      // is how its account is found without guessing.
+      ...(this.options.webhookMode === 'preference'
+        ? {
+            notification_url: `${this.options.publicUrl.replace(/\/$/, '')}/mercadopago/webhook/${ctx.channel.token}?source_news=webhooks&ref=${issued.token}`,
+          }
+        : {}),
+    };
 
     try {
       const preference = await this.api.createPreference(accessToken, body, idempotencyKey);
+      await this.registry.setPreferenceId(issued.id, preference.id);
       return {
         preferenceId: preference.id,
         initPoint: preference.init_point,

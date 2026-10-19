@@ -6,6 +6,7 @@ import {
   MercadoPagoAttentionEvent,
   MercadoPagoChannelLink,
   MercadoPagoConnectionService,
+  MercadoPagoPreference,
 } from '../src';
 import { MercadoPagoPaymentClaim } from '../src/entities/mercadopago-payment-claim.entity';
 import { MercadoPagoPaymentProcessor } from '../src/services/payment-processor.service';
@@ -13,11 +14,14 @@ import { MercadoPagoMock, MockPayment, OAuthGrant } from './mp-mock';
 import {
   BACK_URLS,
   checkoutAsGuest,
+  issuedFor,
   notesOf,
   PayableStore,
   provisionStore,
   readOrder,
+  referenceFields,
   STOREFRONT_URL,
+  useIssuer,
 } from './shop-helpers';
 import { asSuperAdmin, createMpTestEnvironment, createStore, TestStore } from './test-env';
 
@@ -48,6 +52,8 @@ const accounts = () =>
   server.app.get(TransactionalConnection).rawConnection.getRepository(MercadoPagoAccount);
 const links = () =>
   server.app.get(TransactionalConnection).rawConnection.getRepository(MercadoPagoChannelLink);
+const preferences = () =>
+  server.app.get(TransactionalConnection).rawConnection.getRepository(MercadoPagoPreference);
 const claims = () =>
   server.app.get(TransactionalConnection).rawConnection.getRepository(MercadoPagoPaymentClaim);
 
@@ -63,7 +69,7 @@ function pay(
     status: 'approved',
     transaction_amount: order.totalWithTax / 100,
     currency_id: 'ARS',
-    external_reference: order.code,
+    ...referenceFields(order),
     ownerToken: grant.access_token,
     collector_id: grant.user_id,
     ...overrides,
@@ -98,8 +104,8 @@ const createPreference = (orderCode: string) =>
 const lastPreference = () => mp.requestsTo('POST', '/checkout/preferences').at(-1)!;
 
 const SYNC = gql`
-  mutation ($orderCode: String!, $paymentId: String!) {
-    syncMercadoPagoPayment(orderCode: $orderCode, paymentId: $paymentId) {
+  mutation ($externalReference: String!, $paymentId: String!) {
+    syncMercadoPagoPayment(externalReference: $externalReference, paymentId: $paymentId) {
       __typename
       ... on MercadoPagoPaymentSync {
         outcome
@@ -180,6 +186,7 @@ const statuses = async (store: TestStore) =>
 beforeAll(async () => {
   mp.start();
   await init();
+  useIssuer(server.app);
   connections = server.app.get(MercadoPagoConnectionService);
   processor = server.app.get(MercadoPagoPaymentProcessor);
   server.app
@@ -200,6 +207,8 @@ afterAll(async () => {
 beforeEach(async () => {
   mp.reset();
   events.length = 0;
+  // Preferences point at accounts and links, so they go first.
+  await preferences().createQueryBuilder().delete().execute();
   await links().createQueryBuilder().delete().execute();
   await accounts().createQueryBuilder().delete().execute();
 });
@@ -273,25 +282,23 @@ describe('a store that changes account (X to Y)', () => {
     expect(await stateOf(storeA, voucher.code)).toBe('PaymentSettled');
   });
 
-  it('tries the accounts of the store until one can see the payment', async () => {
+  it('reads a payment with the account of its preference, never trying the others', async () => {
     await connections.link(storeA.channelId, gx);
-    await connections.link(storeA.channelId, gy);
-    const order = await checkoutAsGuest(shopClient, storeA, payableA);
+    const order = await checkoutAsGuest(shopClient, storeA, payableA); // issued with X
+    await connections.link(storeA.channelId, gy); // the store changes account
     const payment = pay(order, gx);
 
-    // Preference mode and the sync mutation know the store but not the account.
+    // The sync mutation holds the reference: the registry names the account, nobody guesses it.
     const result = await processor.process({
       mpPaymentId: String(payment.id),
-      channelId: storeA.channelId,
+      externalReference: issuedFor(order).externalReference,
     });
 
     expect(result).toMatchObject({ outcome: 'settled', orderCode: order.code });
-    const tokens = mp
-      .requestsTo('GET', `/v1/payments/${payment.id}`)
-      .map((r) => authOf(r))
-      .slice(0, 2);
-    // The account the store sells with is tried first, then the retired one.
-    expect(tokens).toEqual([`Bearer ${gy.access_token}`, `Bearer ${gx.access_token}`]);
+    const tokens = new Set(
+      mp.requestsTo('GET', `/v1/payments/${payment.id}`).map((r) => authOf(r)),
+    );
+    expect(tokens).toEqual(new Set([`Bearer ${gx.access_token}`]));
   });
 });
 
@@ -499,7 +506,7 @@ describe('the collector must be the account the payment was read with (PRD 9.7)'
         const payment = pay(order, gx, overrides());
 
         const { syncMercadoPagoPayment } = await shopClient.query(SYNC, {
-          orderCode: order.code,
+          externalReference: issuedFor(order).externalReference,
           paymentId: String(payment.id),
         });
 
