@@ -4,18 +4,18 @@ Un punto pasa a **Resuelto** solo con evidencia escrita en este archivo. Los que
 tienen su evidencia en "Evidencia"; los pendientes necesitan credenciales de Mercado Pago y se
 prueban con los pasos de "Pruebas de sandbox".
 
-| #   | Punto                                                           | Estado                 | Quién lo resuelve               |
-| --- | --------------------------------------------------------------- | ---------------------- | ------------------------------- |
-| V1  | Webhook a nivel aplicación recibe pagos de locales vía OAuth    | **Pendiente** (ver V1) | Responsable, con credenciales   |
-| V2  | Firma `x-signature` en notificaciones a `notification_url`      | **Pendiente** (ver V2) | Responsable, con credenciales   |
-| V3  | `WebhookSignatureValidator` en `mercadopago` 3.x                | **Resuelto**           | Implementación                  |
-| V4  | Compra como invitado con email ya registrado                    | **Resuelto**           | Implementación                  |
-| V5  | Mismo email como invitado en dos tiendas                        | **Resuelto**           | Implementación                  |
-| V6  | Lista completa de estados de pago                               | **Pendiente** (ver V6) | Responsable (una consulta real) |
-| V7  | Una línea por producto vs. una sola línea con el total          | **Pendiente** (ver V7) | Responsable, con credenciales   |
-| V8  | Calculator por defecto = tarifa fija exacta                     | **Resuelto**           | Implementación                  |
-| V9  | `EmailPlugin`: remitente y plantilla por canal                  | **Resuelto**           | Implementación                  |
-| V10 | SDK 3.x en servidor, OAuth con SDK, `UuidIdStrategy` + `strict` | **Resuelto**           | Implementación                  |
+| #   | Punto                                                           | Estado                          | Quién lo resuelve               |
+| --- | --------------------------------------------------------------- | ------------------------------- | ------------------------------- |
+| V1  | Webhook a nivel aplicación recibe pagos de locales vía OAuth    | **Parcial** (ver evidencia V1)  | Responsable, con credenciales   |
+| V2  | Firma `x-signature` en notificaciones a `notification_url`      | **Pendiente** (ver V2)          | Responsable, con credenciales   |
+| V3  | `WebhookSignatureValidator` en `mercadopago` 3.x                | **Resuelto**                    | Implementación                  |
+| V4  | Compra como invitado con email ya registrado                    | **Resuelto**                    | Implementación                  |
+| V5  | Mismo email como invitado en dos tiendas                        | **Resuelto**                    | Implementación                  |
+| V6  | Lista completa de estados de pago                               | **Pendiente** (ver V6)          | Responsable (una consulta real) |
+| V7  | Una línea por producto vs. una sola línea con el total          | **Resuelto** (ver evidencia V7) | Responsable, con credenciales   |
+| V8  | Calculator por defecto = tarifa fija exacta                     | **Resuelto**                    | Implementación                  |
+| V9  | `EmailPlugin`: remitente y plantilla por canal                  | **Resuelto**                    | Implementación                  |
+| V10 | SDK 3.x en servidor, OAuth con SDK, `UuidIdStrategy` + `strict` | **Resuelto**                    | Implementación                  |
 
 Puntos que aparecieron al implementar (no estaban en el PRD):
 
@@ -24,8 +24,8 @@ Puntos que aparecieron al implementar (no estaban en el PRD):
 | V11 | Qué pasa si el envío deja de ser elegible al pasar a pago (PRD 9.6 paso 1)                            | **Resuelto**                     | Implementación                |
 | V12 | Respuesta de la renovación del token (campos, rotación, `expires_in`)                                 | **Resuelto** (ver evidencia V12) | Responsable, con credenciales |
 | V13 | Cuerpo y llegada de las notificaciones `mp-connect`                                                   | **Parcial** (ver evidencia V13)  | Responsable, con credenciales |
-| V14 | `expiration_date_from` en el pasado y clave de idempotencia de la preferencia                         | **Pendiente** (ver V14)          | Responsable, con credenciales |
-| V15 | Mensaje de Mercado Pago al reembolsar sin saldo                                                       | **Pendiente** (ver V15)          | Responsable, con credenciales |
+| V14 | `expiration_date_from` en el pasado y clave de idempotencia de la preferencia                         | **Resuelto** (ver evidencia V14) | Responsable, con credenciales |
+| V15 | Mensaje de Mercado Pago al reembolsar sin saldo                                                       | **Parcial** (ver evidencia V15)  | Responsable, con credenciales |
 | V16 | Parámetros de la redirección de vuelta y demora de `auto_return`                                      | **Pendiente** (ver V16)          | Responsable, con credenciales |
 | V17 | El `scope` que devuelve el OAuth incluye `offline_access`                                             | **Resuelto** (ver evidencia V17) | Responsable, con credenciales |
 | V18 | Unidad de `ts` en `x-signature` (segundos o milisegundos)                                             | **Pendiente** (ver V18)          | Responsable, con credenciales |
@@ -509,3 +509,31 @@ La revocación se hizo con la cuenta del vendedor de prueba (Seguridad › Aplic
 **Reacción de la plataforma** (sin intervención): Mercado Pago envió `mp-connect` con `user_id=3779666951`, firmado. La plataforma preguntó a Mercado Pago (`users/me` → 401, renovación → `invalid_grant`), concluyó la revocación y dejó la cuenta `disconnected`, con `lastError` «Access was revoked from Mercado Pago.», sin tokens guardados y con su vínculo `retired` (DEC-42).
 
 Las reglas de DEC-55 quedan confirmadas con las respuestas reales: la revocación se reconoce por un **401** del token de acceso y por **`invalid_grant`** en la renovación.
+
+### V1, parte A: la URL y la firma funcionan (resuelta, 2026-10-21)
+
+- En Webhooks › Modo productivo › **Simular notificación** (URL de producción, evento **Pagos**, Data ID `123456789`), Mercado Pago respondió **200 - OK**. El cuerpo enviado fue `{"action":"payment.updated","api_version":"v1","data":{"id":"123456789"},"date_created":"2021-11-01T02:02:02Z","id":"123456","live_mode":false,"type":"payment","user_id":436636422}`.
+- El log del servidor registró `Webhook received: topic=payment id=123456789 user_id=436636422 signed=yes route=application ref=no`, y el worker `Payment 123456789: ignored (unknown_seller)`, que es lo correcto: ese `user_id` de la simulación no es una cuenta conocida.
+- Conclusiones: la dirección pública llega al servidor, `MP_WEBHOOK_SECRET` es la clave de la aplicación (la firma se valida), el evento «Pagos (legacy)» envía el tópico `payment`, y la ruta de la aplicación toma el `user_id` del cuerpo.
+- **Falta la parte B:** que los pagos reales de un local lleguen con su `user_id`. En el sandbox los pagos no envían notificaciones; se cierra con la compra real de $1.
+
+### V7: una línea por producto o una sola con el total (resuelto, 2026-10-21)
+
+- Pedido con 2 productos distintos, cupón del 10 % y envío a domicilio: Alfajores x12 (9.800), Medialunas x6 (4.500) y envío (1.500). Total de la tienda: **$14.370,00** (14.300 − 10 % = 12.870, más 1.500).
+- La preferencia que recibió Mercado Pago (`GET /checkout/preferences/{id}`) tuvo tres ítems: Alfajores 8.820, Medialunas 4.050 y Envío 1.500. **Suman exactamente 14.370**, igual que el pedido: el descuento se repartió por línea sin redondeos.
+- Mercado Pago aceptó la preferencia y su página mostró «Productos $14.370».
+- **Decisión:** el valor por defecto sigue siendo `MP_PREFERENCE_ITEMS_MODE=lines`. El modo `total` no hace falta.
+
+### V14: `expiration_date_from` en el pasado y clave de idempotencia (resuelto, 2026-10-21)
+
+- Una preferencia creada a las 22:24 salió con `expiration_date_from` a las 22:20 (4 minutos en el pasado) y `expiration_date_to` a las 22:50. Mercado Pago la aceptó sin error. En el log no hubo ningún `Preference creation failed`.
+- Pulsar «Pagar» fuera de la ventana de 5 minutos (a las 22:24 y a las 22:32) creó una preferencia nueva cada vez, sin error. Pulsarlo de nuevo dentro de la ventana (22:34) **no creó otra fila: reutilizó la preferencia** de la ventana (misma clave de idempotencia) y la página de Mercado Pago cargó sin error.
+
+### V15: reembolso (parcial, 2026-10-21)
+
+- **No se pudo probar el caso «sin saldo».** El reembolso se intentó desde el dashboard (Pedidos › pedido › Refund) sobre un pago de prueba aprobado de $1.800, y Mercado Pago lo rechazó por otro motivo propio del sandbox:
+  - Con el token `TEST-`: `POST /v1/payments/{id}/refunds` → **404** `{"message":"Payment not found","error":"not_found","status":404,"cause":[{"code":2000,"description":"Payment not found",...}]}`. El mismo token **lee** el pago (`GET` → 200, `approved`, `live_mode: true`).
+  - Con el token `APP_USR-` (el que deja la renovación, V12): **400** `{"message":"This transaction does not support to be refunded","error":"bad_request","status":400,"cause":[{"code":2084,...}]}`.
+  - Los pagos de prueba de este sandbox no parecen reembolsables. Con una cuenta real habría que repetirlo.
+- **Lo que sí se comprobó (DEC-17):** el rechazo no se pierde. El reembolso queda en estado `Failed`, con el monto y el motivo elegidos, y el mensaje de Mercado Pago en su `metadata`: `{"errorMessage": "Mercado Pago rejected the refund: Payment not found"}`. El pedido sigue `PaymentSettled` y en Mercado Pago no se creó ningún reembolso.
+- **Cómo se ve en el dashboard (no es claro):** la línea de tiempo del pedido dice solo «Refund #… transitioned to Failed». El motivo está en _Payment details › Refunds (1)_ (desplegable cerrado por defecto), y ahí aparece como `Metadata { 1 item }`, que hay que desplegar. Son dos clics ocultos, y quien atiende el local no ve por qué falló. **Mejora propuesta:** dejar una nota en el historial del pedido con el mensaje de Mercado Pago cuando un reembolso falla, como ya se hace con los pagos en revisión. Pendiente de decidir.
