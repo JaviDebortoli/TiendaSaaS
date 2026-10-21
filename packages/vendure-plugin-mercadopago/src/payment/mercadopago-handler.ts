@@ -1,11 +1,13 @@
 import {
   LanguageCode,
+  Logger,
+  OrderService,
   PaymentMethodEligibilityChecker,
   PaymentMethodHandler,
   UserInputError,
 } from '@vendure/core';
 import { createHash } from 'node:crypto';
-import { MERCADOPAGO_HANDLER_CODE } from '../constants';
+import { loggerCtx, MERCADOPAGO_HANDLER_CODE } from '../constants';
 import { validatePaymentAgainstOrder } from '../lib/payment-validation';
 import { MercadoPagoConnectionService } from '../services/connection.service';
 import { MercadoPagoPaymentOperations } from '../services/payment-operations.service';
@@ -13,6 +15,7 @@ import { isSettling, verifiedSettlement } from '../settlement-scope';
 
 let operations: MercadoPagoPaymentOperations;
 let connections: MercadoPagoConnectionService;
+let orders: OrderService;
 
 /** `user_id` of the account that collected a payment, as stamped when it settled. */
 function accountOf(payment: { metadata: unknown }): string | undefined {
@@ -34,6 +37,7 @@ export const mercadoPagoHandler = new PaymentMethodHandler({
 
   init(injector) {
     operations = injector.get(MercadoPagoPaymentOperations);
+    orders = injector.get(OrderService);
   },
 
   async createPayment(_ctx, order, amount, _args, metadata) {
@@ -101,7 +105,7 @@ export const mercadoPagoHandler = new PaymentMethodHandler({
         };
   },
 
-  async createRefund(ctx, input, amount, _order, payment) {
+  async createRefund(ctx, input, amount, order, payment) {
     // Same payment and amount within the same minute share a key, so a retry never refunds twice.
     const idempotencyKey = createHash('sha256')
       .update(
@@ -116,9 +120,23 @@ export const mercadoPagoHandler = new PaymentMethodHandler({
       payment.amount,
       idempotencyKey,
     );
-    return result.ok
-      ? { state: 'Settled', transactionId: result.refundId }
-      : { state: 'Failed', metadata: { errorMessage: result.message } };
+    if (result.ok) return { state: 'Settled', transactionId: result.refundId };
+    // The reason is kept in the refund's metadata, which the dashboard buries behind two clicks:
+    // the order history is where the person who runs the store looks first (PRD 9.9, V15).
+    try {
+      await orders.addNoteToOrder(ctx, {
+        id: order.id,
+        note: `Mercado Pago refund of ${order.currencyCode} ${(amount / 100).toFixed(2)} for Mercado Pago payment ${payment.transactionId} failed: ${result.message}`,
+        isPublic: false,
+      });
+    } catch (error) {
+      // The note is a courtesy: the refund stays Failed with its reason in the metadata either way.
+      Logger.warn(
+        `Could not note the failed refund of payment ${payment.transactionId}: ${error instanceof Error ? error.message : String(error)}`,
+        loggerCtx,
+      );
+    }
+    return { state: 'Failed', metadata: { errorMessage: result.message } };
   },
 });
 
