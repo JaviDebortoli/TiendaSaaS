@@ -1,5 +1,6 @@
+import { OrderService } from '@vendure/core';
 import gql from 'graphql-tag';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MercadoPagoConnectionService } from '../src';
 import { MercadoPagoWebhookService } from '../src/services/webhook.service';
 import { MercadoPagoMock, OAuthGrant } from './mp-mock';
@@ -204,6 +205,34 @@ describe('refunds (PRD 9.9)', () => {
     expect(refundOrder.state).toBe('Failed');
     expect(String(refundOrder.metadata.errorMessage)).toContain('Not enough balance');
     expect(mp.payments.get(payment.id)!.transaction_amount_refunded).toBeUndefined();
+    // The reason is also in the order history, where the person who runs the store looks first.
+    const notes = notesOf(await readOrder(adminClient, store, order.code));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain(`refund of ARS ${(order.totalWithTax / 100).toFixed(2)}`);
+    expect(notes[0]).toContain(`Mercado Pago payment ${payment.id}`);
+    expect(notes[0]).toContain('Not enough balance');
+  });
+
+  it('still reports the refund as Failed when the note cannot be written', async () => {
+    const { order } = await settledOrder();
+    mp.refundError = 'Not enough balance in the seller account to refund this payment';
+    const orders = server.app.get(OrderService);
+    const addNote = vi.spyOn(orders, 'addNoteToOrder').mockRejectedValueOnce(new Error('db down'));
+
+    const { refundOrder } = await refund(order.code, [0, 1]);
+
+    expect(addNote).toHaveBeenCalledTimes(1);
+    expect(refundOrder.state).toBe('Failed');
+    expect(String(refundOrder.metadata.errorMessage)).toContain('Not enough balance');
+    addNote.mockRestore();
+  });
+
+  it('leaves no note when the refund goes through', async () => {
+    const { order } = await settledOrder();
+
+    await refund(order.code, [0, 1]);
+
+    expect(notesOf(await readOrder(adminClient, store, order.code))).toEqual([]);
   });
 
   describe('when the store is disconnected', () => {
@@ -221,6 +250,10 @@ describe('refunds (PRD 9.9)', () => {
       expect(refundOrder.state).toBe('Failed');
       expect(String(refundOrder.metadata.errorMessage)).toBe(
         `Este pago se cobró en la cuenta ${SELLER}, que ya no está vinculada. Hacé el reembolso desde el panel de Mercado Pago de esa cuenta.`,
+      );
+      // The owner finds the same words in the order history.
+      expect(notesOf(await readOrder(adminClient, store, order.code)).join('\n')).toContain(
+        'Hacé el reembolso desde el panel de Mercado Pago de esa cuenta.',
       );
     });
   });
