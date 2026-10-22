@@ -4,37 +4,37 @@ Un punto pasa a **Resuelto** solo con evidencia escrita en este archivo. Los que
 tienen su evidencia en "Evidencia"; los pendientes necesitan credenciales de Mercado Pago y se
 prueban con los pasos de "Pruebas de sandbox".
 
-| #   | Punto                                                           | Estado                 | Quién lo resuelve               |
-| --- | --------------------------------------------------------------- | ---------------------- | ------------------------------- |
-| V1  | Webhook a nivel aplicación recibe pagos de locales vía OAuth    | **Pendiente** (ver V1) | Responsable, con credenciales   |
-| V2  | Firma `x-signature` en notificaciones a `notification_url`      | **Pendiente** (ver V2) | Responsable, con credenciales   |
-| V3  | `WebhookSignatureValidator` en `mercadopago` 3.x                | **Resuelto**           | Implementación                  |
-| V4  | Compra como invitado con email ya registrado                    | **Resuelto**           | Implementación                  |
-| V5  | Mismo email como invitado en dos tiendas                        | **Resuelto**           | Implementación                  |
-| V6  | Lista completa de estados de pago                               | **Pendiente** (ver V6) | Responsable (una consulta real) |
-| V7  | Una línea por producto vs. una sola línea con el total          | **Pendiente** (ver V7) | Responsable, con credenciales   |
-| V8  | Calculator por defecto = tarifa fija exacta                     | **Resuelto**           | Implementación                  |
-| V9  | `EmailPlugin`: remitente y plantilla por canal                  | **Resuelto**           | Implementación                  |
-| V10 | SDK 3.x en servidor, OAuth con SDK, `UuidIdStrategy` + `strict` | **Resuelto**           | Implementación                  |
+| #   | Punto                                                           | Estado                          | Quién lo resuelve               |
+| --- | --------------------------------------------------------------- | ------------------------------- | ------------------------------- |
+| V1  | Webhook a nivel aplicación recibe pagos de locales vía OAuth    | **Parcial** (ver evidencia V1)  | Responsable, con credenciales   |
+| V2  | Firma `x-signature` en notificaciones a `notification_url`      | **Pendiente** (ver V2)          | Responsable, con credenciales   |
+| V3  | `WebhookSignatureValidator` en `mercadopago` 3.x                | **Resuelto**                    | Implementación                  |
+| V4  | Compra como invitado con email ya registrado                    | **Resuelto**                    | Implementación                  |
+| V5  | Mismo email como invitado en dos tiendas                        | **Resuelto**                    | Implementación                  |
+| V6  | Lista completa de estados de pago                               | **Pendiente** (ver V6)          | Responsable (una consulta real) |
+| V7  | Una línea por producto vs. una sola línea con el total          | **Resuelto** (ver evidencia V7) | Responsable, con credenciales   |
+| V8  | Calculator por defecto = tarifa fija exacta                     | **Resuelto**                    | Implementación                  |
+| V9  | `EmailPlugin`: remitente y plantilla por canal                  | **Resuelto**                    | Implementación                  |
+| V10 | SDK 3.x en servidor, OAuth con SDK, `UuidIdStrategy` + `strict` | **Resuelto**                    | Implementación                  |
 
 Puntos que aparecieron al implementar (no estaban en el PRD):
 
-| #   | Punto                                                                                                 | Estado                  | Quién lo resuelve             |
-| --- | ----------------------------------------------------------------------------------------------------- | ----------------------- | ----------------------------- |
-| V11 | Qué pasa si el envío deja de ser elegible al pasar a pago (PRD 9.6 paso 1)                            | **Resuelto**            | Implementación                |
-| V12 | Respuesta de la renovación del token (campos, rotación, `expires_in`)                                 | **Pendiente** (ver V12) | Responsable, con credenciales |
-| V13 | Cuerpo y llegada de las notificaciones `mp-connect`                                                   | **Pendiente** (ver V13) | Responsable, con credenciales |
-| V14 | `expiration_date_from` en el pasado y clave de idempotencia de la preferencia                         | **Pendiente** (ver V14) | Responsable, con credenciales |
-| V15 | Mensaje de Mercado Pago al reembolsar sin saldo                                                       | **Pendiente** (ver V15) | Responsable, con credenciales |
-| V16 | Parámetros de la redirección de vuelta y demora de `auto_return`                                      | **Pendiente** (ver V16) | Responsable, con credenciales |
-| V17 | El `scope` que devuelve el OAuth incluye `offline_access`                                             | **Pendiente** (ver V17) | Responsable, con credenciales |
-| V18 | Unidad de `ts` en `x-signature` (segundos o milisegundos)                                             | **Pendiente** (ver V18) | Responsable, con credenciales |
-| V19 | `collector_id` del pago = `user_id` del OAuth = `user_id` de la notificación                          | **Pendiente** (ver V19) | Responsable, con credenciales |
-| V20 | Si una autorización OAuth nueva de la misma cuenta anula los tokens anteriores                        | **Pendiente** (ver V20) | Responsable, con credenciales |
-| V21 | Formato y largo de `external_reference` que Mercado Pago acepta y devuelve igual                      | **Pendiente** (ver V21) | Responsable, con credenciales |
-| V22 | Cómo se obtiene el `preference_id` de un pago (también en efectivo)                                   | **Pendiente** (ver V22) | Responsable, con credenciales |
-| V23 | Mercado Pago conserva `?ref=` de la `notification_url` (modo `preference`)                            | **Pendiente** (ver V23) | Responsable, con credenciales |
-| V24 | Qué devuelve Mercado Pago con un token revocado (código HTTP y cuerpo), al usar el token y al renovar | **Pendiente** (ver V24) | Responsable, con credenciales |
+| #   | Punto                                                                                                 | Estado                           | Quién lo resuelve             |
+| --- | ----------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------- |
+| V11 | Qué pasa si el envío deja de ser elegible al pasar a pago (PRD 9.6 paso 1)                            | **Resuelto**                     | Implementación                |
+| V12 | Respuesta de la renovación del token (campos, rotación, `expires_in`)                                 | **Resuelto** (ver evidencia V12) | Responsable, con credenciales |
+| V13 | Cuerpo y llegada de las notificaciones `mp-connect`                                                   | **Parcial** (ver evidencia V13)  | Responsable, con credenciales |
+| V14 | `expiration_date_from` en el pasado y clave de idempotencia de la preferencia                         | **Resuelto** (ver evidencia V14) | Responsable, con credenciales |
+| V15 | Mensaje de Mercado Pago al reembolsar sin saldo                                                       | **Parcial** (ver evidencia V15)  | Responsable, con credenciales |
+| V16 | Parámetros de la redirección de vuelta y demora de `auto_return`                                      | **Pendiente** (ver V16)          | Responsable, con credenciales |
+| V17 | El `scope` que devuelve el OAuth incluye `offline_access`                                             | **Resuelto** (ver evidencia V17) | Responsable, con credenciales |
+| V18 | Unidad de `ts` en `x-signature` (segundos o milisegundos)                                             | **Pendiente** (ver V18)          | Responsable, con credenciales |
+| V19 | `collector_id` del pago = `user_id` del OAuth = `user_id` de la notificación                          | **Parcial** (ver evidencia V19)  | Responsable, con credenciales |
+| V20 | Si una autorización OAuth nueva de la misma cuenta anula los tokens anteriores                        | **Resuelto** (ver evidencia V20) | Responsable, con credenciales |
+| V21 | Formato y largo de `external_reference` que Mercado Pago acepta y devuelve igual                      | **Parcial** (ver evidencia V21)  | Responsable, con credenciales |
+| V22 | Cómo se obtiene el `preference_id` de un pago (también en efectivo)                                   | **Parcial** (ver evidencia V22)  | Responsable, con credenciales |
+| V23 | Mercado Pago conserva `?ref=` de la `notification_url` (modo `preference`)                            | **Pendiente** (ver V23)          | Responsable, con credenciales |
+| V24 | Qué devuelve Mercado Pago con un token revocado (código HTTP y cuerpo), al usar el token y al renovar | **Resuelto** (ver evidencia V24) | Responsable, con credenciales |
 
 **V19 se corre primero, y después V21 y V22** (V24 junto con V20): el rechazo de los pagos cuyo `collector_id` no coincide con la cuenta consultada
 (PRD 9.5) depende de que los tres identificadores sean el mismo número. Si no coinciden, no sigas: la
@@ -111,6 +111,11 @@ comparar **tres** valores sobre **un mismo pago de prueba** de un vendedor vincu
 | `user_id` del OAuth          | Dashboard › Ajustes › Mercado Pago: «Cuenta de Mercado Pago n.º ...» (es el `user_id` que devolvió `/oauth/token`), o `docker compose exec database psql -U tiendasaas -c 'select "mpUserId" from mercado_pago_account'`                                                                                        |       |
 | `user_id` de la notificación | Línea `Webhook received: topic=payment id=<pago> user_id=<este>` del log (V1)                                                                                                                                                                                                                                   |       |
 | `collector_id` del pago      | `docker compose exec database psql -U tiendasaas -c "select metadata from payment order by \"createdAt\" desc limit 1"`: campos `mpAccountUserId` y `mpCollectorId` (si el pago quedó en `needs_review`, la nota del pedido en el dashboard dice qué cuenta consultó y qué `collector_id` informó Mercado Pago) |       |
+
+> **Aviso (2026-10-21).** En el sandbox, un pago de una preferencia creada con el token OAuth de un
+> vendedor de prueba no se puede completar: Mercado Pago responde «Oh, no, algo anduvo mal» al pagar
+> (ver «Hallazgos de sandbox» en la sección Evidencia). Los pasos de abajo describen el recorrido
+> previsto; lo que se pudo comprobar y cómo se simuló el recorrido está en la evidencia de V19.
 
 1. Con el vendedor de prueba 1 vinculado (paso 8 de la preparación), pagar en la tienda con el comprador
    de prueba (tarjeta `APRO`). Los pagos con credenciales de prueba no envían notificaciones: la
@@ -407,3 +412,128 @@ para ver qué vínculos se liberarían.
 - El PRD 9.6 pedía verificar qué error devuelve la API. Resultado: **ninguno**. Vendure 3.8 reemplaza el método de envío que dejó de calificar por el primero que sí califica **en el momento en que cambia el pedido** (por ejemplo, al bajar la cantidad por debajo del mínimo del envío a domicilio queda "Retiro en el local", sin costo de envío), y el pase a `ArrangingPayment` funciona sin error.
 - Riesgo: con dos pestañas abiertas, el comprador podría pagar un total distinto del que revisó. Mitigación: `commerce-core` ofrece `startPayment(urls, { expectedTotal })`, que falla con `ORDER_CHANGED` y no crea nada si el pedido ya no suma lo que se mostró; la tienda de referencia lo usa y lo explica al comprador.
 - Pruebas: `apps/server/e2e/provisioning.e2e-spec.ts` ("is swapped for one that qualifies, with no error (V11)"), `packages/commerce-core/tests/checkout.test.ts` (`ORDER_CHANGED`) y `apps/storefront-reference/e2e/purchase.spec.ts` ("refuses to charge an order that changed after the buyer reviewed it").
+
+### V17: el `scope` del OAuth incluye `offline_access` (resuelto, 2026-10-21)
+
+- Se vinculó el vendedor de prueba 1 (`user_id` 3779666951) con `MP_OAUTH_TEST_TOKEN=true`. El `scope` guardado de la cuenta incluye `offline_access`, además de `payments`, `read`, `write` y los permisos `urn:mp:online:...` (preferencias, órdenes comerciales, pagos, reembolsos y contracargos).
+- El token de acceso devuelto empieza con `TEST-` (72 caracteres): el parámetro `test_token: true` del canje funciona y entrega credenciales de sandbox. `GET /users/me` con ese token responde 200 con `site_id` MLA y la etiqueta `test_user`.
+- La cuenta guardó una vigencia de unos 180 días (venció el 2027-04-19), coherente con `expires_in` de 15552000 segundos.
+
+### V19: los tres identificadores de la cuenta (parcial, 2026-10-21)
+
+- **`user_id` del OAuth:** 3779666951 (dashboard, «Cuenta de Mercado Pago n.º 3779666951», y base de datos). Es el mismo número que el User ID de la cuenta de prueba en el panel de desarrolladores.
+- **`collector_id` de la preferencia:** 3779666951, tanto en `GET /checkout/preferences/{id}` como en los datos que usa la propia página de pago de Mercado Pago.
+- **`collector_id` de un pago:** dos pagos aprobados de este vendedor (184385754559 y 185425070664) devolvieron `collector_id` 3779666951 al leerlos con el token OAuth guardado, o sea que el token OAuth ve los pagos de su propia cuenta. En el segundo, el sistema aplicó su regla (9.5): el pedido quedó `PaymentSettled` y el pago guardó `mpAccountUserId` 3779666951 y `mpCollectorId` 3779666951.
+- **`user_id` de la notificación:** el aviso `mp-connect` recibido al vincular trajo `id=3779666951` y `user_id=3779666951`, firmado. **Falta el `user_id` de la notificación de un pago:** en el sandbox los pagos no envían notificaciones, como dice la documentación (PRD 12), y no llegó ninguna. Se cierra con la compra real de V1, parte B.
+- Cómo se hizo el recorrido: ver «Hallazgos de sandbox».
+
+### V21: formato y largo de `external_reference` (parcial, 2026-10-21)
+
+- Se creó una preferencia con la referencia `RLXJ6PYZALRB6L94-IrQ4UAb3OJDcMdYVJoS5Ig` (código de pedido de 16 caracteres, guion y 22 caracteres en base64url: **39 caracteres**, con mayúsculas, minúsculas, números y sin `-` ni `_` en este identificador). Mercado Pago la aceptó.
+- Al leer el pago aprobado con `GET /v1/payments/{id}`, `external_reference` volvió **idéntica**, carácter por carácter y con el mismo largo, a la registrada por la plataforma.
+- **Falta:** comparar la referencia que viene en la dirección de retorno (V16) y probar un identificador que contenga `-` o `_`, que el base64url permite.
+
+### V22: cómo se obtiene el `preference_id` de un pago (parcial, 2026-10-21)
+
+- En los dos pagos con tarjeta (184385754559 y 185425070664) el pago trae `order: { id, type: "mercadopago" }` y `GET /merchant_orders/{order.id}` devuelve `preference_id` igual a la preferencia que se pagó (`order_status: paid`). Ambos se leyeron con el token OAuth guardado, que tiene el alcance `urn:mp:online:merchant-order/read-write`.
+- **Falta:** un pago en efectivo (Rapipago o Pago Fácil) que quede pendiente y se apruebe después, y un reintento de pago del mismo pedido.
+
+### V13: notificaciones `mp-connect` (parcial, 2026-10-21)
+
+- Al vincular el vendedor de prueba, Mercado Pago envió a `POST /mercadopago/webhook` una notificación `topic=mp-connect` con `id=3779666951`, `user_id=3779666951` y firma válida (`signed=yes`). Eso confirma también que `MP_WEBHOOK_SECRET` es la clave de la aplicación (parte A de V1).
+- Llegó cuando la plataforma todavía no tenía guardada la cuenta (el trabajo respondió `unknown_account`), probablemente porque Mercado Pago la envía mientras termina la autorización. No tuvo consecuencias: la regla solo marca `disconnected` cuando la verificación lo confirma.
+- **Al revocar el acceso** (Seguridad › Aplicaciones conectadas › «Quitar permisos», con la cuenta del vendedor) llegó otra notificación `mp-connect` firmada, con `id=3779666951` y `user_id=3779666951`. La plataforma la verificó con Mercado Pago, concluyó la revocación y dejó la cuenta `disconnected`, sin tokens y con el vínculo `retired` (ver V24).
+- **Al volver a autorizar la misma cuenta** (V20) **no llegó** ninguna notificación `mp-connect`.
+- **Falta:** el cuerpo completo de la notificación (el log solo muestra tópico, id y `user_id`).
+
+### Hallazgos de sandbox (2026-10-21)
+
+**Un pago de una preferencia creada con el token OAuth de un vendedor de prueba no se completa.**
+
+- _Qué pasa._ Con el vendedor de prueba 1 vinculado por OAuth, la preferencia se crea bien (la plataforma y una preferencia mínima hecha a mano con el mismo token). Al pagarla, la página de Mercado Pago muestra «Oh, no, algo anduvo mal» y no se crea ningún pago: la búsqueda de pagos y de órdenes comerciales del vendedor devuelve 0. Pasa con la dirección `www` y con la de `sandbox`, con sesión iniciada y sin ella, y con las tarjetas Mastercard y Visa de prueba.
+- _Códigos de error (HAR del navegador)._ Con el comprador de prueba logueado: el flujo pasa al paso `challenge` con el desafío `reauth`, la llamada `/checkout/v1/api/reauth` devuelve `{}` y el flujo termina en `FL-789ad3c7` (`service_error`, `unexpected_error`). Sin iniciar sesión: llega al último paso `pay` y termina en `FL-55e6bcdc` (mismo tipo). Las llamadas a `card_tokens` responden 201, así que no es un bloqueo de CORS.
+- _Qué no es._ No es el email del pagador (se probó con un `test_user_...@testuser.com`), ni el tipo de token (falla con el `TEST-` del canje y también con el `APP_USR-` que devuelve la renovación, ver V12), ni la dirección de pago, ni nuestro código: la preferencia mínima falla igual. Las preferencias creadas con un token OAuth traen `marketplace: MP-MKT-<id de la aplicación>`.
+- _Qué sí funciona._ Con el **Access Token de las credenciales de prueba de la aplicación** (que pertenece a esa misma cuenta de vendedor), la preferencia se paga y se aprueba (pagos 184385754559 y 185425070664).
+- _Reportes de terceros._ Casos parecidos, con tokens obtenidos por OAuth y sin solución oficial: [mercadopago/sdk-js, discusión 62](https://github.com/mercadopago/sdk-js/discussions/62) y [Nailnet, PR 13](https://github.com/lucasfradus/Nailnet/pull/13). Un desarrollador conocido reporta que con cuentas y compras reales funciona.
+- _Sin resolver:_ si con una cuenta real vinculada por OAuth el pago se completa. Solo lo responde la compra real de $1 (V1, parte B).
+
+**Cómo se simuló el recorrido completo** (para repetirlo):
+
+1. Dejar el pedido en `ArrangingPayment` y tomar su `externalReference` y su total de la tabla `mercado_pago_preference`.
+2. Crear en Mercado Pago, con el Access Token de las credenciales de prueba de la aplicación, una preferencia con el mismo monto, esa `external_reference`, las mismas `back_urls` de la tienda y `auto_return: approved`.
+3. **Solo en la base de pruebas:** actualizar el `preferenceId` de esa fila de `mercado_pago_preference` al `id` de la preferencia nueva (`update mercado_pago_preference set "preferenceId" = '<id>' where "externalReference" = '<referencia>'`). Sin este paso el sistema deja el pago en `needs_review` con `preference_mismatch`, que es el comportamiento correcto.
+4. Pagar como invitado con la tarjeta de prueba. Mercado Pago devuelve al comprador a la tienda, que usa el respaldo (`syncMercadoPagoPayment`) y liquida el pedido. Resultado obtenido: `PaymentSettled`, pago `Settled`, reclamo `settled`.
+
+### V12: respuesta de la renovación del token (resuelto, 2026-10-21)
+
+Se renovó la cuenta del vendedor de prueba con `refresh-connections --all` (la herramienta del propio sistema, que usa `grant_type=refresh_token`) y se comparó el estado de la cuenta antes y después, con huellas de los tokens en vez de sus valores:
+
+- **El refresh token rota.** El de antes y el de después son distintos (mismo formato `TG-…`, 38 caracteres). El sistema guarda el nuevo, como exige el diseño (PRD 9.4).
+- **`expires_in` viene en la respuesta y vale unos 180 días.** El vencimiento pasó de 2027-04-19 20:59 a 2027-04-19 21:52 (la renovación se hizo ~53 minutos después de la vinculación): vuelve a ser «ahora + 15552000 segundos».
+- **El `scope` se mantiene** (mismos 953 caracteres, con `offline_access`).
+- **El tipo de access token cambia:** el del canje con `test_token: true` empieza con `TEST-` (72 caracteres) y el de la renovación empieza con `APP_USR-` (75 caracteres). Nuestra renovación no envía `test_token`. Un token `APP_USR-` de una cuenta de prueba funciona para la API (`users/me` 200, crea preferencias) pero no cambia el problema de pago del sandbox (ver «Hallazgos de sandbox»). En producción real no hay `test_token`, así que no cambia nada; solo afecta a quien pruebe en sandbox después de la primera renovación. **Decisión pendiente:** si con `MP_OAUTH_TEST_TOKEN=true` también hay que enviar `test_token` al renovar. No se tocó.
+
+### V20: una autorización nueva de la misma cuenta no anula los tokens anteriores (resuelto, 2026-10-21)
+
+- Con la cuenta vinculada se guardó el access token «A» (el que había dejado la renovación de V12, `APP_USR-`). Se volvió a autorizar la **misma** cuenta desde el dashboard («Vincular otra cuenta»). La plataforma guardó tokens nuevos (access `TEST-`, distinto de «A»; refresh distinto) y dejó un único vínculo `active`.
+- Con «A» después de la reautorización: `GET /users/me` → **200** y `GET /v1/payments/185425070664` → **200**. **La autorización nueva no anula el token anterior.**
+- Matiz: «A» no era el token del primer canje de código (ese ya no estaba guardado), así que no se probó ese token en concreto.
+- Consecuencia para el diseño: tal como se previó, funciona en este caso (los tokens viven una sola vez en la cuenta y la autorización nueva reemplaza los guardados). Un entorno de desarrollo que autorice la cuenta no deja sin acceso a producción **por este mecanismo**; la advertencia del README sobre usar otra aplicación de Mercado Pago en desarrollo se mantiene porque la revocación sí mata todos los tokens (V24).
+- La reautorización no generó notificación `mp-connect` (V13).
+
+### V24: qué devuelve Mercado Pago con un token revocado (resuelto, 2026-10-21)
+
+La revocación se hizo con la cuenta del vendedor de prueba (Seguridad › Aplicaciones conectadas › «Quitar permisos» sobre la aplicación). Antes se guardaron, dentro del contenedor y sin imprimirlos, el access token y el refresh token vigentes.
+
+**Token de acceso revocado.** Las cuatro llamadas respondieron **HTTP 401** con el cuerpo `{"message":"invalid access token"}`:
+
+- `GET /users/me`
+- `GET /v1/payments/{id}`
+- `GET /merchant_orders/{id}`
+- `POST /checkout/preferences`
+
+**Renovación con el refresh token revocado.** `POST /oauth/token` con `grant_type=refresh_token` respondió **HTTP 400**:
+
+```json
+{
+  "message": "Error validating grant. Your authorization code or refresh token may be expired or it was already used",
+  "error": "invalid_grant",
+  "status": 400,
+  "cause": []
+}
+```
+
+- La respuesta **es la misma** para un refresh token revocado que para uno ya usado, y no los distingue. Por eso la verificación de la plataforma toma el candado por cuenta y relee los tokens antes de concluir (DEC-54).
+- **La revocación mata todos los tokens de la autorización**, también el access token «A» que había sobrevivido a la reautorización de V20 (`users/me` → 401 después de revocar).
+
+**Reacción de la plataforma** (sin intervención): Mercado Pago envió `mp-connect` con `user_id=3779666951`, firmado. La plataforma preguntó a Mercado Pago (`users/me` → 401, renovación → `invalid_grant`), concluyó la revocación y dejó la cuenta `disconnected`, con `lastError` «Access was revoked from Mercado Pago.», sin tokens guardados y con su vínculo `retired` (DEC-42).
+
+Las reglas de DEC-55 quedan confirmadas con las respuestas reales: la revocación se reconoce por un **401** del token de acceso y por **`invalid_grant`** en la renovación.
+
+### V1, parte A: la URL y la firma funcionan (resuelta, 2026-10-21)
+
+- En Webhooks › Modo productivo › **Simular notificación** (URL de producción, evento **Pagos**, Data ID `123456789`), Mercado Pago respondió **200 - OK**. El cuerpo enviado fue `{"action":"payment.updated","api_version":"v1","data":{"id":"123456789"},"date_created":"2021-11-01T02:02:02Z","id":"123456","live_mode":false,"type":"payment","user_id":436636422}`.
+- El log del servidor registró `Webhook received: topic=payment id=123456789 user_id=436636422 signed=yes route=application ref=no`, y el worker `Payment 123456789: ignored (unknown_seller)`, que es lo correcto: ese `user_id` de la simulación no es una cuenta conocida.
+- Conclusiones: la dirección pública llega al servidor, `MP_WEBHOOK_SECRET` es la clave de la aplicación (la firma se valida), el evento «Pagos (legacy)» envía el tópico `payment`, y la ruta de la aplicación toma el `user_id` del cuerpo.
+- **Falta la parte B:** que los pagos reales de un local lleguen con su `user_id`. En el sandbox los pagos no envían notificaciones; se cierra con la compra real de $1.
+
+### V7: una línea por producto o una sola con el total (resuelto, 2026-10-21)
+
+- Pedido con 2 productos distintos, cupón del 10 % y envío a domicilio: Alfajores x12 (9.800), Medialunas x6 (4.500) y envío (1.500). Total de la tienda: **$14.370,00** (14.300 − 10 % = 12.870, más 1.500).
+- La preferencia que recibió Mercado Pago (`GET /checkout/preferences/{id}`) tuvo tres ítems: Alfajores 8.820, Medialunas 4.050 y Envío 1.500. **Suman exactamente 14.370**, igual que el pedido: el descuento se repartió por línea sin redondeos.
+- Mercado Pago aceptó la preferencia y su página mostró «Productos $14.370».
+- **Decisión:** el valor por defecto sigue siendo `MP_PREFERENCE_ITEMS_MODE=lines`. El modo `total` no hace falta.
+
+### V14: `expiration_date_from` en el pasado y clave de idempotencia (resuelto, 2026-10-21)
+
+- Una preferencia creada a las 22:24 salió con `expiration_date_from` a las 22:20 (4 minutos en el pasado) y `expiration_date_to` a las 22:50. Mercado Pago la aceptó sin error. En el log no hubo ningún `Preference creation failed`.
+- Pulsar «Pagar» fuera de la ventana de 5 minutos (a las 22:24 y a las 22:32) creó una preferencia nueva cada vez, sin error. Pulsarlo de nuevo dentro de la ventana (22:34) **no creó otra fila: reutilizó la preferencia** de la ventana (misma clave de idempotencia) y la página de Mercado Pago cargó sin error.
+
+### V15: reembolso (parcial, 2026-10-21)
+
+- **No se pudo probar el caso «sin saldo».** El reembolso se intentó desde el dashboard (Pedidos › pedido › Refund) sobre un pago de prueba aprobado de $1.800, y Mercado Pago lo rechazó por otro motivo propio del sandbox:
+  - Con el token `TEST-`: `POST /v1/payments/{id}/refunds` → **404** `{"message":"Payment not found","error":"not_found","status":404,"cause":[{"code":2000,"description":"Payment not found",...}]}`. El mismo token **lee** el pago (`GET` → 200, `approved`, `live_mode: true`).
+  - Con el token `APP_USR-` (el que deja la renovación, V12): **400** `{"message":"This transaction does not support to be refunded","error":"bad_request","status":400,"cause":[{"code":2084,...}]}`.
+  - Los pagos de prueba de este sandbox no parecen reembolsables. Con una cuenta real habría que repetirlo.
+- **Lo que sí se comprobó (DEC-17):** el rechazo no se pierde. El reembolso queda en estado `Failed`, con el monto y el motivo elegidos, y el mensaje de Mercado Pago en su `metadata`: `{"errorMessage": "Mercado Pago rejected the refund: Payment not found"}`. El pedido sigue `PaymentSettled` y en Mercado Pago no se creó ningún reembolso.
+- **Cómo se ve en el dashboard (no es claro):** la línea de tiempo del pedido dice solo «Refund #… transitioned to Failed». El motivo está en _Payment details › Refunds (1)_ (desplegable cerrado por defecto), y ahí aparece como `Metadata { 1 item }`, que hay que desplegar. Son dos clics ocultos, y quien atiende el local no ve por qué falló. **Mejora implementada (DEC-57):** cuando un reembolso falla, el sistema deja una nota privada en el historial del pedido con el monto, el pago y el mensaje de Mercado Pago, como ya se hace con los pagos en revisión.
