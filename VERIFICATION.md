@@ -26,12 +26,12 @@ Puntos que aparecieron al implementar (no estaban en el PRD):
 | V13 | Cuerpo y llegada de las notificaciones `mp-connect`                                                   | **Parcial** (ver evidencia V13)  | Responsable, con credenciales |
 | V14 | `expiration_date_from` en el pasado y clave de idempotencia de la preferencia                         | **Resuelto** (ver evidencia V14) | Responsable, con credenciales |
 | V15 | Mensaje de Mercado Pago al reembolsar sin saldo                                                       | **Parcial** (ver evidencia V15)  | Responsable, con credenciales |
-| V16 | Parámetros de la redirección de vuelta y demora de `auto_return`                                      | **Pendiente** (ver V16)          | Responsable, con credenciales |
+| V16 | Parámetros de la redirección de vuelta y demora de `auto_return`                                      | **Resuelto** (ver evidencia V16) | Responsable, con credenciales |
 | V17 | El `scope` que devuelve el OAuth incluye `offline_access`                                             | **Resuelto** (ver evidencia V17) | Responsable, con credenciales |
 | V18 | Unidad de `ts` en `x-signature` (segundos o milisegundos)                                             | **Pendiente** (ver V18)          | Responsable, con credenciales |
 | V19 | `collector_id` del pago = `user_id` del OAuth = `user_id` de la notificación                          | **Parcial** (ver evidencia V19)  | Responsable, con credenciales |
 | V20 | Si una autorización OAuth nueva de la misma cuenta anula los tokens anteriores                        | **Resuelto** (ver evidencia V20) | Responsable, con credenciales |
-| V21 | Formato y largo de `external_reference` que Mercado Pago acepta y devuelve igual                      | **Parcial** (ver evidencia V21)  | Responsable, con credenciales |
+| V21 | Formato y largo de `external_reference` que Mercado Pago acepta y devuelve igual                      | **Resuelto** (ver evidencia V21) | Responsable, con credenciales |
 | V22 | Cómo se obtiene el `preference_id` de un pago (también en efectivo)                                   | **Parcial** (ver evidencia V22)  | Responsable, con credenciales |
 | V23 | Mercado Pago conserva `?ref=` de la `notification_url` (modo `preference`)                            | **Pendiente** (ver V23)          | Responsable, con credenciales |
 | V24 | Qué devuelve Mercado Pago con un token revocado (código HTTP y cuerpo), al usar el token y al renovar | **Resuelto** (ver evidencia V24) | Responsable, con credenciales |
@@ -427,11 +427,13 @@ para ver qué vínculos se liberarían.
 - **`user_id` de la notificación:** el aviso `mp-connect` recibido al vincular trajo `id=3779666951` y `user_id=3779666951`, firmado. **Falta el `user_id` de la notificación de un pago:** en el sandbox los pagos no envían notificaciones, como dice la documentación (PRD 12), y no llegó ninguna. Se cierra con la compra real de V1, parte B.
 - Cómo se hizo el recorrido: ver «Hallazgos de sandbox».
 
-### V21: formato y largo de `external_reference` (parcial, 2026-10-21)
+### V21: formato y largo de `external_reference` (resuelto, 2026-10-21 y 2026-10-29)
 
 - Se creó una preferencia con la referencia `RLXJ6PYZALRB6L94-IrQ4UAb3OJDcMdYVJoS5Ig` (código de pedido de 16 caracteres, guion y 22 caracteres en base64url: **39 caracteres**, con mayúsculas, minúsculas, números y sin `-` ni `_` en este identificador). Mercado Pago la aceptó.
 - Al leer el pago aprobado con `GET /v1/payments/{id}`, `external_reference` volvió **idéntica**, carácter por carácter y con el mismo largo, a la registrada por la plataforma.
-- **Falta:** comparar la referencia que viene en la dirección de retorno (V16) y probar un identificador que contenga `-` o `_`, que el base64url permite.
+- **Dirección de vuelta (2026-10-29).** En la compra simulada del pedido `PLHQVXW9ECREVSA8` (ver V16), el parámetro `external_reference` de la dirección de vuelta fue `PLHQVXW9ECREVSA8-sEwRU14yAtKc30cmfNBXTA`, idéntico al registrado, y el pedido quedó `PaymentSettled`.
+- **Identificador con `-` y `_` (2026-10-29).** El base64url los permite y cerca de la mitad de las referencias tendrá alguno ((62/64)²² ≈ 50 % no tiene ninguno). Con el Access Token de las credenciales de prueba de la aplicación se creó una preferencia con `external_reference` = `V21TESTREFCODE01-_b-cd_EF-gh_ij-KL_mn-_` (39 caracteres; el identificador empieza y termina con `_` y tiene `-` y `_` seguidos). La respuesta de la preferencia la devolvió idéntica. Se pagó con la tarjeta de prueba (pago 186764636762, `approved`) y `GET /v1/payments/search?external_reference=<referencia>` encontró ese único pago, con la referencia **idéntica** (comparación sensible a mayúsculas, 39 de 39 caracteres).
+- **Conclusión:** Mercado Pago acepta y devuelve la referencia sin cambios en la preferencia, en el pago y en la dirección de vuelta. No hace falta acortarla ni cambiar su alfabeto.
 
 ### V22: cómo se obtiene el `preference_id` de un pago (parcial, 2026-10-21)
 
@@ -537,3 +539,13 @@ Las reglas de DEC-55 quedan confirmadas con las respuestas reales: la revocació
   - Los pagos de prueba de este sandbox no parecen reembolsables. Con una cuenta real habría que repetirlo.
 - **Lo que sí se comprobó (DEC-17):** el rechazo no se pierde. El reembolso queda en estado `Failed`, con el monto y el motivo elegidos, y el mensaje de Mercado Pago en su `metadata`: `{"errorMessage": "Mercado Pago rejected the refund: Payment not found"}`. El pedido sigue `PaymentSettled` y en Mercado Pago no se creó ningún reembolso.
 - **Cómo se ve en el dashboard (no es claro):** la línea de tiempo del pedido dice solo «Refund #… transitioned to Failed». El motivo está en _Payment details › Refunds (1)_ (desplegable cerrado por defecto), y ahí aparece como `Metadata { 1 item }`, que hay que desplegar. Son dos clics ocultos, y quien atiende el local no ve por qué falló. **Mejora implementada (DEC-57):** cuando un reembolso falla, el sistema deja una nota privada en el historial del pedido con el monto, el pago y el mensaje de Mercado Pago, como ya se hace con los pagos en revisión.
+
+### V16: parámetros de la dirección de vuelta y demora de `auto_return` (resuelto, 2026-10-29)
+
+Compra simulada del pedido `PLHQVXW9ECREVSA8` ($1.800) con el procedimiento de «Hallazgos de sandbox»: preferencia creada con el Access Token de las credenciales de prueba de la aplicación, con las `back_urls` de la tienda (`/checkout/result?outcome=…`) y `auto_return: approved`, pagada como invitado con la tarjeta `APRO`.
+
+- **Demora:** el regreso automático a la tienda llegó 3 o 4 segundos después de la pantalla de pago aprobado.
+- **Dirección de vuelta completa:** `/checkout/result?outcome=success&collection_id=185714151477&collection_status=approved&payment_id=185714151477&status=approved&external_reference=PLHQVXW9ECREVSA8-sEwRU14yAtKc30cmfNBXTA&payment_type=credit_card&merchant_order_id=45658181891&preference_id=3779666951-1eca2d88-b6ca-41cc-bcc1-3481609de456&site_id=MLA&processing_mode=aggregator&merchant_account_id=null`.
+- **Parámetros que agrega Mercado Pago:** `collection_id` y `payment_id` (los dos, con el mismo valor), `collection_status` y `status`, `external_reference`, `merchant_order_id`, `preference_id`, `payment_type`, `site_id`, `processing_mode` y `merchant_account_id`. `outcome` es de la tienda: Mercado Pago conserva los parámetros que ya trae la `back_url`.
+- La tienda tomó `payment_id` y `external_reference`, el respaldo (`syncMercadoPagoPayment`) liquidó el pedido y quedó `PaymentSettled`, con el pago 185714151477 `Settled` por $1.800.
+- **Hallazgo aparte (`TRUST_PROXY`):** con el túnel delante, el servidor registró `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` de `express-rate-limit`: llega `X-Forwarded-For` con `trust proxy` apagado, así que el límite de peticiones ve a todos los visitantes como el túnel. No afectó el pago. Detrás de un proxy o túnel hay que configurar `TRUST_PROXY`.
