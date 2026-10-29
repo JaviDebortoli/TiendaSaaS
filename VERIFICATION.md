@@ -11,7 +11,7 @@ prueban con los pasos de "Pruebas de sandbox".
 | V3  | `WebhookSignatureValidator` en `mercadopago` 3.x                | **Resuelto**                    | Implementación                  |
 | V4  | Compra como invitado con email ya registrado                    | **Resuelto**                    | Implementación                  |
 | V5  | Mismo email como invitado en dos tiendas                        | **Resuelto**                    | Implementación                  |
-| V6  | Lista completa de estados de pago                               | **Pendiente** (ver V6)          | Responsable (una consulta real) |
+| V6  | Lista completa de estados de pago                               | **Parcial** (ver evidencia V6)  | Responsable (una consulta real) |
 | V7  | Una línea por producto vs. una sola línea con el total          | **Resuelto** (ver evidencia V7) | Responsable, con credenciales   |
 | V8  | Calculator por defecto = tarifa fija exacta                     | **Resuelto**                    | Implementación                  |
 | V9  | `EmailPlugin`: remitente y plantilla por canal                  | **Resuelto**                    | Implementación                  |
@@ -549,3 +549,21 @@ Compra simulada del pedido `PLHQVXW9ECREVSA8` ($1.800) con el procedimiento de �
 - **Parámetros que agrega Mercado Pago:** `collection_id` y `payment_id` (los dos, con el mismo valor), `collection_status` y `status`, `external_reference`, `merchant_order_id`, `preference_id`, `payment_type`, `site_id`, `processing_mode` y `merchant_account_id`. `outcome` es de la tienda: Mercado Pago conserva los parámetros que ya trae la `back_url`.
 - La tienda tomó `payment_id` y `external_reference`, el respaldo (`syncMercadoPagoPayment`) liquidó el pedido y quedó `PaymentSettled`, con el pago 185714151477 `Settled` por $1.800.
 - **Hallazgo aparte (`TRUST_PROXY`):** con el túnel delante, el servidor registró `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` de `express-rate-limit`: llega `X-Forwarded-For` con `trust proxy` apagado, así que el límite de peticiones ve a todos los visitantes como el túnel. No afectó el pago. Detrás de un proxy o túnel hay que configurar `TRUST_PROXY`.
+
+### V6: estados de pago (parcial, 2026-10-29)
+
+Con el Access Token de las credenciales de prueba de la aplicación se creó una preferencia (`external_reference` = `V6TESTSTATUSES01-estados_de_pago_v6`, $100) y se pagó siete veces como invitado con la Mastercard de prueba, cambiando solo el titular. `GET /v1/payments/search?external_reference=<referencia>&sort=date_created&criteria=asc` devolvió los siete pagos, en el orden de los intentos:
+
+| Titular | Pago         | `status`     | `status_detail`                        |
+| ------- | ------------ | ------------ | -------------------------------------- |
+| `OTHE`  | 185717006369 | `rejected`   | `cc_rejected_other_reason`             |
+| `CALL`  | 185717384631 | `rejected`   | `cc_rejected_call_for_authorize`       |
+| `FUND`  | 186766384916 | `rejected`   | `cc_rejected_insufficient_amount`      |
+| `SECU`  | 186766367946 | `rejected`   | `cc_rejected_bad_filled_security_code` |
+| `EXPI`  | 185717474021 | `rejected`   | `cc_rejected_bad_filled_date`          |
+| `FORM`  | 185717693571 | `rejected`   | `cc_rejected_bad_filled_other`         |
+| `CONT`  | 186766779566 | `in_process` | `pending_contingency`                  |
+
+- La búsqueda no devuelve el nombre del titular; la correspondencia sale del orden de los intentos.
+- Junto con `approved` (V16, V19), los estados vistos son `approved`, `rejected` e `in_process`, los tres en la tabla de `status.ts` (`in_process` se trata como pendiente y nunca liquida). Ninguno cayó en `unknown`: no hace falta cambiar `status.ts`.
+- **Falta:** los estados de reembolso (`refunded`, o `approved` con `partially_refunded`). En el sandbox Mercado Pago rechaza los reembolsos de prueba (V15); se ven con la compra real.
