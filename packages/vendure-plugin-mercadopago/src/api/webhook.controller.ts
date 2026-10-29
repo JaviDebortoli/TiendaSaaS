@@ -12,7 +12,7 @@ import {
 import { Channel, Logger, TransactionalConnection } from '@vendure/core';
 import type { Response } from 'express';
 import { loggerCtx, MP_PLUGIN_OPTIONS } from '../constants';
-import { verifyWebhookSignature } from '../lib/signature';
+import { signatureTimestampDigits, verifyWebhookSignature } from '../lib/signature';
 import { REGISTRY_TOKEN_PATTERN } from '../services/preference-registry.service';
 import { MercadoPagoWebhookService } from '../services/webhook.service';
 import type { ResolvedMercadoPagoOptions } from '../types';
@@ -115,9 +115,9 @@ export class MercadoPagoWebhookController {
     // Only the per-preference route (`notification_url`) carries the registry identifier.
     const ref = typeof query.ref === 'string' ? query.ref : undefined;
 
-    // One line per accepted notification: it is the evidence needed to settle V1, V2 and V13.
+    // One line per accepted notification: it is the evidence needed to settle V1, V2, V13 and V18.
     Logger.info(
-      `Webhook received: topic=${topic ?? '-'} id=${dataId ?? '-'} user_id=${mpUserId ?? '-'} signed=${xSignature ? 'yes' : 'no'} route=${channelId === undefined ? 'application' : 'channel'} ref=${ref ? 'yes' : 'no'}`,
+      `Webhook received: topic=${topic ?? '-'} id=${dataId ?? '-'} user_id=${mpUserId ?? '-'} signed=${xSignature ? 'yes' : 'no'} ts_digits=${signatureTimestampDigits(xSignature) ?? '-'} route=${channelId === undefined ? 'application' : 'channel'} ref=${ref ? 'yes' : 'no'}`,
       loggerCtx,
     );
     if (topic === 'payment') {

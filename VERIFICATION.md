@@ -354,6 +354,9 @@ vinculación se rechazará con "no incluyó acceso sin conexión": en ese caso p
 
 La documentación dice milisegundos y su ejemplo y el SDK usan segundos (DEC-9). El sistema acepta
 las dos. Anotar con cuál llega en la práctica (`ts=` con 10 dígitos: segundos; 13: milisegundos).
+La línea `Webhook received: …` de cada notificación aceptada lo muestra como `ts_digits=10` o
+`ts_digits=13` (`-` si no vino firma). Alcanza con una notificación firmada: por ejemplo **Simular
+notificación** en Webhooks (modo productivo) o la `mp-connect` de una vinculación.
 
 ### Lista de control antes del primer cliente
 

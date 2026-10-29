@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { verifyWebhookSignature } from './signature';
+import { signatureTimestampDigits, verifyWebhookSignature } from './signature';
 
 const SECRET = 'test-webhook-secret';
 const NOW_MS = 1_704_908_010_000;
@@ -120,5 +120,24 @@ describe('verifyWebhookSignature', () => {
       });
       expect(result).toEqual({ valid: true });
     });
+  });
+});
+
+describe('signatureTimestampDigits', () => {
+  it('counts the digits of a timestamp in seconds', () => {
+    expect(signatureTimestampDigits('ts=1704908010,v1=abc')).toBe(10);
+  });
+
+  it('counts the digits of a timestamp in milliseconds', () => {
+    expect(signatureTimestampDigits('ts=1704908010000,v1=abc')).toBe(13);
+  });
+
+  it('finds ts when it is not the first pair and reads the first header value', () => {
+    expect(signatureTimestampDigits(['v1=abc, ts=1704908010', 'ts=1'])).toBe(10);
+  });
+
+  it('is undefined without a header or without ts', () => {
+    expect(signatureTimestampDigits(undefined)).toBeUndefined();
+    expect(signatureTimestampDigits('v1=abc')).toBeUndefined();
   });
 });

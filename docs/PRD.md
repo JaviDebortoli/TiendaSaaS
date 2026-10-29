@@ -407,7 +407,7 @@ Detalle de cada paso:
    - **Idempotencia**: si ya existe un Payment con ese `transactionId`, no hacer nada. Las notificaciones pueden repetirse [Diseño].
 
 [Implementado] Precisiones del procesamiento:
-- **Respuesta y cola**: el controlador valida la firma, responde 200 de inmediato y encola el trabajo en la job queue de Vendure con reintentos y espera exponencial. Cada notificación aceptada deja una línea de log (`Webhook received: topic=… id=… user_id=… signed=…`) y su resultado (`Payment …: settled|pending|…`), sin tokens (DEC-40). Una firma inválida se rechaza con 401.
+- **Respuesta y cola**: el controlador valida la firma, responde 200 de inmediato y encola el trabajo en la job queue de Vendure con reintentos y espera exponencial. Cada notificación aceptada deja una línea de log (`Webhook received: topic=… id=… user_id=… signed=… ts_digits=…`, donde `ts_digits` es el largo del `ts` de la firma, para V18) y su resultado (`Payment …: settled|pending|…`), sin tokens (DEC-40). Una firma inválida se rechaza con 401.
 - **Idempotencia con dos mecanismos** (DEC-14), porque la comprobación "ya existe un Payment" no alcanza ante notificaciones concurrentes:
   - Tabla de reclamos `MercadoPagoPaymentClaim`, con índice único por `mpPaymentId` y estados `recorded`, `processing`, `settled` y `needs_review`. Solo quien gana el reclamo agrega el pago; un reclamo `processing` abandonado se retoma a los 5 minutos.
   - En PostgreSQL, cada liquidación toma un `pg_advisory_xact_lock` sobre el pedido. Sin él, **dos pagos aprobados distintos para un mismo pedido se liquidaban los dos** (verificado quitando el bloqueo en `e2e/concurrency.e2e-spec.ts`). El segundo queda en `needs_review` y se avisa al local, que decide si reembolsa.

@@ -30,6 +30,16 @@ function timestampToMillis(ts: number): number {
 }
 
 /**
+ * Number of digits of the `ts` in an `x-signature` header (10 = seconds, 13 = milliseconds), or
+ * undefined when there is none. Logged to settle which unit Mercado Pago really sends (V18).
+ */
+export function signatureTimestampDigits(
+  xSignature: string | string[] | undefined,
+): number | undefined {
+  return TS_PATTERN.exec(first(xSignature) ?? '')?.[1].length;
+}
+
+/**
  * Validates the `x-signature` of a Mercado Pago notification.
  *
  * The HMAC is checked by the SDK's `WebhookSignatureValidator`. Two details are handled here
