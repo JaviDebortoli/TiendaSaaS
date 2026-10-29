@@ -435,10 +435,13 @@ para ver qué vínculos se liberarían.
 - **Identificador con `-` y `_` (2026-10-29).** El base64url los permite y cerca de la mitad de las referencias tendrá alguno ((62/64)²² ≈ 50 % no tiene ninguno). Con el Access Token de las credenciales de prueba de la aplicación se creó una preferencia con `external_reference` = `V21TESTREFCODE01-_b-cd_EF-gh_ij-KL_mn-_` (39 caracteres; el identificador empieza y termina con `_` y tiene `-` y `_` seguidos). La respuesta de la preferencia la devolvió idéntica. Se pagó con la tarjeta de prueba (pago 186764636762, `approved`) y `GET /v1/payments/search?external_reference=<referencia>` encontró ese único pago, con la referencia **idéntica** (comparación sensible a mayúsculas, 39 de 39 caracteres).
 - **Conclusión:** Mercado Pago acepta y devuelve la referencia sin cambios en la preferencia, en el pago y en la dirección de vuelta. No hace falta acortarla ni cambiar su alfabeto.
 
-### V22: cómo se obtiene el `preference_id` de un pago (parcial, 2026-10-21)
+### V22: cómo se obtiene el `preference_id` de un pago (parcial, 2026-10-21 y 2026-10-29)
 
 - En los dos pagos con tarjeta (184385754559 y 185425070664) el pago trae `order: { id, type: "mercadopago" }` y `GET /merchant_orders/{order.id}` devuelve `preference_id` igual a la preferencia que se pagó (`order_status: paid`). Ambos se leyeron con el token OAuth guardado, que tiene el alcance `urn:mp:online:merchant-order/read-write`.
-- **Falta:** un pago en efectivo (Rapipago o Pago Fácil) que quede pendiente y se apruebe después, y un reintento de pago del mismo pedido.
+- **Pago en efectivo (2026-10-29).** Con el Access Token de las credenciales de prueba de la aplicación se creó una preferencia (`external_reference` = `V22TESTCASHPAY01-pago_en_efectivo_v22`) y se pagó como invitado con **Rapipago**. El pago 186767561086 quedó `pending` y ya trae `order: { id: 45689289954, type: "mercadopago" }`. `GET /merchant_orders/45689289954` devuelve el `preference_id` de la preferencia pagada.
+- **Reintentos sobre la misma preferencia (2026-10-29).** Los siete pagos de V6 (seis rechazados y uno `in_process`, todos sobre la misma preferencia) traen `order.id` de tipo `mercadopago`, y su orden comercial devuelve el `preference_id` correcto en los siete.
+- **Una preferencia puede tener varias órdenes comerciales.** Los cinco primeros intentos de V6 quedaron en la orden `45658593209` y los dos últimos en `45689177052`, con la misma preferencia. El diseño no se ve afectado porque busca la orden de cada pago, pero nada debe suponer «una preferencia = una orden comercial».
+- **Falta:** que un pago en efectivo **se apruebe después**. En el sandbox el cupón de Rapipago no se puede pagar; queda para la lista de control con dinero real.
 
 ### V13: notificaciones `mp-connect` (parcial, 2026-10-21)
 
