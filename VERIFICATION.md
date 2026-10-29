@@ -28,7 +28,7 @@ Puntos que aparecieron al implementar (no estaban en el PRD):
 | V15 | Mensaje de Mercado Pago al reembolsar sin saldo                                                       | **Parcial** (ver evidencia V15)  | Responsable, con credenciales |
 | V16 | Parámetros de la redirección de vuelta y demora de `auto_return`                                      | **Resuelto** (ver evidencia V16) | Responsable, con credenciales |
 | V17 | El `scope` que devuelve el OAuth incluye `offline_access`                                             | **Resuelto** (ver evidencia V17) | Responsable, con credenciales |
-| V18 | Unidad de `ts` en `x-signature` (segundos o milisegundos)                                             | **Pendiente** (ver V18)          | Responsable, con credenciales |
+| V18 | Unidad de `ts` en `x-signature` (segundos o milisegundos)                                             | **Resuelto** (ver evidencia V18) | Responsable, con credenciales |
 | V19 | `collector_id` del pago = `user_id` del OAuth = `user_id` de la notificación                          | **Parcial** (ver evidencia V19)  | Responsable, con credenciales |
 | V20 | Si una autorización OAuth nueva de la misma cuenta anula los tokens anteriores                        | **Resuelto** (ver evidencia V20) | Responsable, con credenciales |
 | V21 | Formato y largo de `external_reference` que Mercado Pago acepta y devuelve igual                      | **Resuelto** (ver evidencia V21) | Responsable, con credenciales |
@@ -570,3 +570,9 @@ Con el Access Token de las credenciales de prueba de la aplicación se creó una
 - La búsqueda no devuelve el nombre del titular; la correspondencia sale del orden de los intentos.
 - Junto con `approved` (V16, V19), los estados vistos son `approved`, `rejected` e `in_process`, los tres en la tabla de `status.ts` (`in_process` se trata como pendiente y nunca liquida). Ninguno cayó en `unknown`: no hace falta cambiar `status.ts`.
 - **Falta:** los estados de reembolso (`refunded`, o `approved` con `partially_refunded`). En el sandbox Mercado Pago rechaza los reembolsos de prueba (V15); se ven con la compra real.
+
+### V18: unidad de `ts` en `x-signature` (resuelto, 2026-10-29)
+
+- Con el servidor que registra `ts_digits` en la línea `Webhook received` (rama `feat/mp-log-signature-ts`), se envió **Simular notificación** desde Webhooks › modo productivo (evento Pagos, Data ID `123456789`). Mercado Pago respondió **200 - OK**.
+- Log del servidor: `Webhook received: topic=payment id=123456789 user_id=436636422 signed=yes ts_digits=10 route=application ref=no`. El worker: `Payment 123456789: ignored (unknown_seller)`, lo correcto para el `user_id` de la simulación.
+- **`ts` llega en segundos** (10 dígitos), como el ejemplo de la documentación y el SDK, no en milisegundos como dice el texto. La firma además pasó la tolerancia de 10 minutos, así que es la hora actual en segundos. DEC-9 sigue igual: el sistema acepta las dos unidades.
